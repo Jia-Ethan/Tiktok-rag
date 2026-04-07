@@ -1,21 +1,24 @@
-# 公开样例输出
+# Public sample output
 
-以下为本地 mp4 链路验证的实际输出（2026-04-07），输入为一段微信视频（189 秒）。
+This is a real output sample from the current local-video pipeline.
 
-> 注意：此样例音频内容为英文歌曲，Whisper base 模型仍输出了时间戳准确的转写。中文内容的转写效果通常更好。
+The input was a local video file around 189 seconds long. The goal of this sample is not to prove perfect transcription quality for every case. It is to show the exact artifact shape this project produces today.
 
----
+## Input
 
-## 输入
+- Source type: local video file
+- Duration: 189.5 seconds
+- Output mode: local-first transcription pipeline
 
-- **来源类型：** 本地 mp4 文件
-- **文件：** `微信视频2026-03-30_111151_513.mp4`
-- **时长：** 189.5 秒（约 3 分钟）
-- **大小：** 34 MB
+## Transcript artifact
 
----
+Path pattern:
 
-## Transcript JSON（`data/transcripts/<hash>.json`）
+```text
+data/transcripts/<job_id>.json
+```
+
+Example shape:
 
 ```json
 {
@@ -26,48 +29,43 @@
     {
       "start": 0.0,
       "end": 2.4,
-      "text": " walking along the road,"
+      "text": "walking along the road,"
     },
     {
       "start": 3.0,
       "end": 5.4,
-      "text": " brained back speed memories,"
+      "text": "brained back speed memories,"
     },
     {
       "start": 6.8,
       "end": 10.0,
-      "text": " I can't forget how we used to keep,"
-    },
-    {
-      "start": 10.5,
-      "end": 12.9,
-      "text": " I can't forget your tenderness,"
-    },
-    {
-      "start": 14.3,
-      "end": 16.3,
-      "text": " loving you more and more,"
+      "text": "I can't forget how we used to keep,"
     }
-    // ... 共 48 段
   ]
 }
 ```
 
----
+## Metadata artifact
 
-## Metadata JSON（`data/meta/<hash>.meta.json`）
+Path pattern:
+
+```text
+data/meta/<job_id>.meta.json
+```
+
+Example shape:
 
 ```json
 {
   "source_type": "local_mp4",
   "platform": "local",
-  "input_path": "your/video.mp4",
+  "input_path": "/absolute/path/to/video.mp4",
   "input_size_bytes": 34561319,
   "video_id": null,
-  "title": "微信视频2026-03-30_111151_513",
+  "title": "sample-video",
   "caption": null,
-  "audio_path": "data/audio/6c2105b2808a.wav",
-  "transcript_path": "data/transcripts/6c2105b2808a.json",
+  "audio_path": "/absolute/path/to/data/audio/<job_id>.wav",
+  "transcript_path": "/absolute/path/to/data/transcripts/<job_id>.json",
   "transcript_segments": 48,
   "transcript_duration_seconds": 189.47,
   "whisper_model": "base",
@@ -75,25 +73,20 @@
 }
 ```
 
----
+## Runtime directory layout
 
-## 目录结构（运行时）
-
-```
+```text
 data/
-├── audio/           ← 16kHz WAV，5.8MB（此样例）
-│   └── 6c2105b2808a.wav
-├── transcripts/     ← 转写 JSON，41KB（此样例）
-│   └── 6c2105b2808a.json
-└── meta/           ← 元数据 JSON
-    └── 6c2105b2808a.meta.json
+├── audio/
+│   └── <job_id>.wav
+├── meta/
+│   └── <job_id>.meta.json
+└── transcripts/
+    └── <job_id>.json
 ```
 
----
+## Notes
 
-## 质量说明
-
-- **时间戳精度：** 0.01 秒（Whisper 词级时间戳）
-- **语言检测：** 模型自动判断（此样例判断为 zh，输出为英文歌曲内容）
-- **转写速度：** MacBook Air M2，CPU 推理，约 45 秒处理 189 秒音频
-- **适用内容：** 普通话/英语清晰语音效果最佳，音乐/多人对话/强方言待测
+- The current release optimizes for a clean, inspectable pipeline rather than end-user polish.
+- Local files are the only stable public input mode right now.
+- Douyin/TikTok URL ingestion is not part of the guaranteed workflow in this release.
