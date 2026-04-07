@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+
+# macOS
+.DS_Store
+
+# Project data (personal / generated)
+data/audio/
+data/transcripts/
+data/meta/
+data/raw/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
