@@ -3,7 +3,7 @@
 Suggested GitHub Discussion title:
 
 ```text
-Roadmap feedback: what should come right after local short-video transcription?
+Roadmap feedback: what should come right after local video transcription?
 ```
 
 Suggested post body:
@@ -11,18 +11,17 @@ Suggested post body:
 ```md
 Hi everyone,
 
-`Tiktok-rag` is currently a local-video-first MVP that turns short videos into timestamped transcript + metadata artifacts for downstream LLM workflows.
+`video-rag` currently turns downloaded local videos into timestamped transcript + metadata artifacts for downstream LLM workflows.
 
 What works today:
 
-- local video file input
+- downloaded local video input
 - ffmpeg audio extraction
 - faster-whisper transcription
 - structured transcript and metadata output
 
-What is not publicly reliable yet:
+What does not exist yet:
 
-- Douyin/TikTok URL ingestion
 - chunking
 - retrieval
 - Web UI
@@ -31,9 +30,9 @@ I would love feedback on what should come next.
 
 Questions:
 
-1. Would a local-file-first short-video RAG tool already be useful for you?
-2. After transcription, what matters more: chunking, retrieval, or better ingestion boundaries?
-3. If you work with short videos, what is the actual workflow you want to enable for your LLM?
+1. Would a downloaded-video-first workflow already be useful for you?
+2. After transcription, what matters more: chunking, retrieval, or artifact structure improvements?
+3. If you work with video knowledge, what workflow are you trying to enable for your LLM?
 4. Should this stay developer-first, or become more productized over time?
 
 Direct criticism is welcome too. “This is not useful unless X exists” is valuable feedback.

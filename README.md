@@ -1,35 +1,58 @@
-# Tiktok-rag
+# video-rag
 
-Turn short videos into timestamped, searchable knowledge for your LLM.
+Turn downloaded videos into timestamped, LLM-ready knowledge artifacts.
 
-> Local-video-first MVP for developers building short-video RAG workflows.
-
-[中文说明](docs/README.zh-CN.md) · [Sample output](docs/public-sample-output.md) · [Discussion seed](docs/discussions/roadmap-feedback-seed.md) · [Discussions](https://github.com/Jia-Ethan/Tiktok-rag/discussions)
+把已下载的视频文件转成带时间戳、适合后续 RAG/LLM 工作流使用的结构化知识材料。
 
 ![CLI demo](docs/assets/cli-demo.svg)
 
-## What works today
+## What it does
 
-- Convert a local video file (`.mp4`, `.mov`, `.mkv`) into a 16kHz mono WAV file.
-- Transcribe speech with `faster-whisper`.
-- Export timestamped transcript JSON plus metadata JSON.
-- Keep the pipeline local-first and easy to inspect.
+- Accepts downloaded local video files such as `.mp4`, `.mov`, and `.mkv`
+- Extracts 16kHz mono WAV audio with `ffmpeg`
+- Transcribes speech with `faster-whisper`
+- Writes transcript JSON and metadata JSON for downstream processing
 
-## Why this is useful for LLM workflows
+## 它能做什么
 
-Short videos contain a lot of useful ideas, but most of them are trapped inside audio. This project turns those videos into structured text artifacts that are ready for the next RAG steps: chunking, indexing, retrieval, summarization, and prompt context building.
+- 接收已经下载到本地的视频文件，例如 `.mp4`、`.mov`、`.mkv`
+- 使用 `ffmpeg` 抽取 16kHz 单声道音频
+- 使用 `faster-whisper` 进行语音转写
+- 输出 transcript JSON 和 metadata JSON，方便后续做检索、摘要和知识整理
 
-The current release is intentionally narrow: it solves the first reliable step well, instead of pretending the whole short-video ingestion stack is already done.
+## Why it matters for LLM workflows
+
+Most video knowledge is trapped inside audio. `video-rag` focuses on the first reliable step: turning downloaded videos into inspectable text artifacts that can later be chunked, indexed, retrieved, summarized, or injected into prompts.
+
+This release is intentionally narrow. It does not pretend to be a full RAG product yet. It gives you a clean ingestion foundation.
+
+## 为什么对 LLM 工作流有价值
+
+大量视频里的有效信息，其实都被困在音频里。`video-rag` 先把最可靠的第一步做好：把已经下载的视频，转成可检查、可复用、可继续加工的文本材料。
+
+这一版不会假装自己已经是完整的 RAG 产品。它更像一条干净、稳定的前置处理管线，为后续 chunking、索引、检索、摘要和提示词上下文构建打基础。
 
 ## Demo output
 
-The current public demo uses a local video file as input and produces:
+The current public demo takes one downloaded local video file and produces:
 
 - `data/audio/<job_id>.wav`
 - `data/transcripts/<job_id>.json`
 - `data/meta/<job_id>.meta.json`
 
-See the full public sample here:
+See the sample output:
+
+- [docs/public-sample-output.md](docs/public-sample-output.md)
+
+## 示例输出
+
+当前公开演示使用一段已经下载到本地的视频作为输入，输出三类文件：
+
+- `data/audio/<job_id>.wav`
+- `data/transcripts/<job_id>.json`
+- `data/meta/<job_id>.meta.json`
+
+具体样例可见：
 
 - [docs/public-sample-output.md](docs/public-sample-output.md)
 
@@ -53,8 +76,8 @@ sudo apt install ffmpeg
 ### Setup
 
 ```bash
-git clone https://github.com/Jia-Ethan/Tiktok-rag.git
-cd Tiktok-rag
+git clone https://github.com/Jia-Ethan/video-rag.git
+cd video-rag
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -64,7 +87,7 @@ pip install -r requirements.txt
 
 ```bash
 python3 scripts/pipeline.py \
-  --input /path/to/video.mp4 \
+  --input /path/to/downloaded-video.mp4 \
   --output-dir ./data
 ```
 
@@ -72,62 +95,119 @@ Optional model selection:
 
 ```bash
 python3 scripts/pipeline.py \
-  --input /path/to/video.mp4 \
+  --input /path/to/downloaded-video.mp4 \
   --output-dir ./data \
   --model small
 ```
 
+## 快速开始
+
+### 依赖
+
+- Python 3.9+
+- `ffmpeg`
+
+安装 `ffmpeg`：
+
+```bash
+# macOS
+brew install ffmpeg
+
+# Ubuntu / Debian
+sudo apt install ffmpeg
+```
+
+### 安装
+
+```bash
+git clone https://github.com/Jia-Ethan/video-rag.git
+cd video-rag
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 运行
+
+```bash
+python3 scripts/pipeline.py \
+  --input /path/to/downloaded-video.mp4 \
+  --output-dir ./data
+```
+
+可选模型参数：
+
+```bash
+python3 scripts/pipeline.py \
+  --input /path/to/downloaded-video.mp4 \
+  --output-dir ./data \
+  --model small
+```
+
+## Supported input
+
+- Downloaded local video files only
+- Recommended formats: `.mp4`, `.mov`, `.mkv`
+
+## 当前支持的输入
+
+- 只支持已经下载到本地的视频文件
+- 推荐格式：`.mp4`、`.mov`、`.mkv`
+
 ## Current limitations
 
-- Stable public support is for **local video files only**.
-- Douyin/TikTok URL ingestion is an **experimental placeholder**, not a reliable public feature.
-- No chunking, vector store, retrieval UI, or Web app yet.
-- No batch ingestion yet.
+- URL inputs are not supported in this release
+- No chunking, vector store, retrieval UI, or Web app yet
+- No batch ingestion yet
+
+## 当前边界
+
+- 这一版不支持任何 URL 输入
+- 这一版还没有 chunking、向量库、检索界面和 Web UI
+- 这一版还不支持批量处理
 
 ## Roadmap
 
-### Next up
+1. Add chunk-ready transcript output for downstream retrieval
+2. Add a minimal retrieval layer so the “RAG” part becomes directly demoable
+3. Improve artifact quality and structure for longer video workflows
 
-1. Make URL ingestion boundaries explicit and better structured.
-2. Add chunk-ready transcript output for downstream retrieval.
-3. Add a minimal retrieval layer so the “RAG” part becomes directly demoable.
+## 路线图
 
-### Not in this release
+1. 增加面向后续检索的 chunk-ready 输出
+2. 增加最小可演示的 retrieval 层，让 “RAG” 更名副其实
+3. 优化更长视频场景下的输出质量和结构
 
-- Cookie-based login automation
-- Browser automation for downloads
-- Chroma integration
-- Web UI
+## Feedback
 
-## Feedback and discussions
+If you are building video knowledge workflows and want to talk, I would love to hear from you.
 
-If this project is interesting to you, the most helpful feedback right now is:
+- GitHub Discussions: [github.com/Jia-Ethan/video-rag/discussions](https://github.com/Jia-Ethan/video-rag/discussions)
+- GitHub Issues: use issues for bugs or scoped feature requests
+- Email: `ethan_pier@icloud.com`
 
-- What short-video knowledge workflow are you trying to build?
-- Would local-file-first still be useful for your use case?
-- What should come first after transcription: chunking, retrieval, or URL ingestion?
+## 联系方式
 
-Use:
+如果你也在做视频知识库、RAG 或 LLM 工作流，欢迎直接联系我交流。
 
-- [GitHub Discussions](https://github.com/Jia-Ethan/Tiktok-rag/discussions) for roadmap and product feedback
-- GitHub Issues for bugs or concrete feature requests
+- GitHub Discussions： [github.com/Jia-Ethan/video-rag/discussions](https://github.com/Jia-Ethan/video-rag/discussions)
+- GitHub Issues：适合反馈 bug 或明确的功能请求
+- 邮箱：`ethan_pier@icloud.com`
 
 ## Project structure
 
 ```text
-Tiktok-rag/
+video-rag/
 ├── app/                     # Reserved for future UI work
 ├── docs/
 │   ├── assets/
 │   ├── discussions/
-│   ├── public-sample-output.md
-│   └── README.zh-CN.md
+│   └── public-sample-output.md
 ├── scripts/
 │   └── pipeline.py
 ├── data/                    # Runtime output (gitignored)
 │   ├── audio/
 │   ├── meta/
-│   ├── raw/
 │   └── transcripts/
 ├── .github/
 │   └── ISSUE_TEMPLATE/

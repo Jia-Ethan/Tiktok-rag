@@ -1,14 +1,13 @@
 # Public sample output
 
-This is a real output sample from the current local-video pipeline.
+This sample shows the current public shape of `video-rag`.
 
-The input was a local video file around 189 seconds long. The goal of this sample is not to prove perfect transcription quality for every case. It is to show the exact artifact shape this project produces today.
+The input is one downloaded local video file. The purpose of this document is to make the artifact structure easy to inspect before retrieval features exist.
 
 ## Input
 
-- Source type: local video file
-- Duration: 189.5 seconds
-- Output mode: local-first transcription pipeline
+- Source type: downloaded local video file
+- Output mode: local video transcription pipeline
 
 ## Transcript artifact
 
@@ -57,9 +56,9 @@ Example shape:
 
 ```json
 {
-  "source_type": "local_mp4",
+  "source_type": "local_video",
   "platform": "local",
-  "input_path": "/absolute/path/to/video.mp4",
+  "input_path": "/absolute/path/to/downloaded-video.mp4",
   "input_size_bytes": 34561319,
   "video_id": null,
   "title": "sample-video",
@@ -87,6 +86,6 @@ data/
 
 ## Notes
 
-- The current release optimizes for a clean, inspectable pipeline rather than end-user polish.
-- Local files are the only stable public input mode right now.
-- Douyin/TikTok URL ingestion is not part of the guaranteed workflow in this release.
+- This release only supports downloaded local video files.
+- The current focus is clean transcript and metadata generation.
+- Retrieval-related layers will come later.

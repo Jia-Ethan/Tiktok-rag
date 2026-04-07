@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
 """
-Tiktok-rag pipeline.
+video-rag pipeline.
 
-Current public support:
-  - local video files: stable
-  - Douyin/TikTok URL ingestion: experimental placeholder only
+This release supports downloaded local video files only.
 
 Quickstart:
-  python3 scripts/pipeline.py --input /path/to/video.mp4 --output-dir ./data
+  python3 scripts/pipeline.py --input /path/to/downloaded-video.mp4 --output-dir ./data
 """
 import os
 import json
 import hashlib
 import argparse
 import subprocess
-import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional
 
 try:
     from faster_whisper import WhisperModel
@@ -55,49 +51,6 @@ def run_cmd(cmd: list[str], check: bool = True, capture: bool = True, show_error
             print(f"  ERROR: {result.stderr[:500]}")
         raise RuntimeError(f"Command failed: {' '.join(str(x) for x in cmd)}\n{result.stderr[:300]}")
     return result.stdout if capture else ""
-
-
-def extract_video_id(url: str) -> Optional[str]:
-    """Extract a best-effort video identifier from a Douyin/TikTok URL."""
-    patterns = [
-        r'/video/(\d+)',
-        r'v\.douyin\.com/([A-Za-z0-9]+)',
-        r'(\d{19,})',
-    ]
-    for pat in patterns:
-        m = re.search(pat, url)
-        if m:
-            return m.group(1)
-    return None
-
-
-def download_douyin(url: str, output_path: Path) -> Optional[Path]:
-    """
-    Best-effort Douyin/TikTok download via yt-dlp.
-    Returns a local Path on success, or None on failure.
-    """
-    print(f"[URL Ingestion] Attempting download: {url}")
-    cmd = [
-        "yt-dlp",
-        "--no-warnings",
-        "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "--output", str(output_path.with_suffix(".%(ext)s")),
-        "--write-info-json",
-        "--no-playlist",
-        url,
-    ]
-    try:
-        run_cmd(cmd, check=True, show_error=False)
-        candidate = output_path.with_suffix(".mp4")
-        if candidate.exists():
-            return candidate
-        for f in output_path.parent.glob(f"{output_path.stem}.*"):
-            if f.suffix.lower() in [".mp4", ".mkv", ".webm", ".flv"]:
-                return f
-    except Exception as e:
-        print("  [URL Ingestion] Download failed in the current public setup.")
-        print(f"  [URL Ingestion] Internal detail: {type(e).__name__}")
-    return None
 
 
 def extract_audio(video_path: Path, audio_path: Path) -> None:
@@ -202,7 +155,7 @@ def process_local_mp4(mp4_path: Path, output_dir: Path,
 
     print(f"\n[Step 3/3] Writing metadata")
     metadata = {
-        "source_type": "local_mp4",
+        "source_type": "local_video",
         "platform": "local",
         "input_path": str(mp4_path.resolve()),
         "input_size_bytes": os.path.getsize(mp4_path),
@@ -225,51 +178,16 @@ def process_local_mp4(mp4_path: Path, output_dir: Path,
     return metadata
 
 
-def process_douyin_share(url: str, output_dir: Path,
-                           model_size: str = DEFAULT_WHISPER_MODEL) -> dict:
-    """Best-effort experimental handling for Douyin/TikTok share URLs."""
-    print(f"\n=== Processing experimental URL input: {url} ===")
-
-    video_id = extract_video_id(url)
-    print(f"[URL Ingestion] Extracted video_id: {video_id}")
-
-    raw_dir = output_dir / "raw"
-    ensure_dir(raw_dir)
-
-    tmp_video = raw_dir / f"douyin_{video_id or 'tmp'}"
-    downloaded = download_douyin(url, tmp_video)
-
-    if downloaded is None:
-        raise RuntimeError(
-            "Douyin/TikTok URL ingestion is experimental and not publicly supported yet.\n"
-            "Please use a local video file instead:\n"
-            f"  python3 {__file__} --input /path/to/video.mp4 --output-dir ./data"
-        )
-
-    metadata = process_local_mp4(downloaded, output_dir, model_size=model_size)
-    metadata["source_type"] = "douyin_share"
-    metadata["platform"] = "douyin"
-    metadata["video_id"] = video_id
-    metadata["input_url_or_path"] = url
-
-    meta_path = Path(metadata["transcript_path"]).parent.parent / "meta" / f"{Path(metadata['transcript_path']).stem}.meta.json"
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
-
-    print(f"[Done] Experimental URL metadata updated: {meta_path}")
-    return metadata
-
-
 # ─── CLI 入口 ─────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Tiktok-rag local-first short-video pipeline",
+        description="video-rag local video transcription pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument("--input", "-i", required=True,
-                        help="Local video path, or an experimental Douyin/TikTok URL")
+                        help="Downloaded local video file path")
     parser.add_argument("--output-dir", "-o", default="./data",
                         help="Output root directory (default: ./data)")
     parser.add_argument("--model", "-m", default=DEFAULT_WHISPER_MODEL,
@@ -281,24 +199,18 @@ def main():
 
     input_val = args.input.strip()
 
-    is_url = input_val.startswith("http://") or input_val.startswith("https://")
-    is_douyin = "douyin.com" in input_val or "v.douyin.com" in input_val
-    is_tiktok = "tiktok.com" in input_val or "vt.tiktok.com" in input_val
-
     try:
-        if is_douyin or is_tiktok:
-            metadata = process_douyin_share(input_val, output_dir, model_size=args.model)
-        elif is_url:
+        if input_val.startswith("http://") or input_val.startswith("https://"):
             raise RuntimeError(
-                "Unsupported URL source. This release only supports local files publicly, "
-                "with experimental Douyin/TikTok placeholders."
+                "URL inputs are not supported in this release. "
+                "Please use a downloaded local video file."
             )
-        else:
-            mp4_path = Path(input_val).expanduser().resolve()
-            if not mp4_path.exists():
-                print(f"ERROR: File not found: {mp4_path}")
-                raise SystemExit(1)
-            metadata = process_local_mp4(mp4_path, output_dir, model_size=args.model)
+
+        mp4_path = Path(input_val).expanduser().resolve()
+        if not mp4_path.exists():
+            print(f"ERROR: File not found: {mp4_path}")
+            raise SystemExit(1)
+        metadata = process_local_mp4(mp4_path, output_dir, model_size=args.model)
 
         audio_file = Path(metadata["audio_path"]).name
         meta_file = f"{Path(metadata['transcript_path']).stem}.meta.json"
