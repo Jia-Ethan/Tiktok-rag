@@ -2,12 +2,12 @@
 
 This sample shows what `video-rag` produces today and why those artifacts matter.
 
-The current release does **not** implement retrieval yet. Its job is to produce stable, inspectable text assets that later retrieval layers can build on.
+The current release still does **not** implement retrieval. What it does provide now is a reliable path from downloaded video input to transcript, metadata, and chunk-ready artifacts.
 
 ## Input
 
 - Source type: downloaded local video file
-- Processing mode: single-video local ingestion and transcription
+- Processing mode: single-video local ingestion, transcription, and chunk artifact generation
 
 ## Artifact schema
 
@@ -50,7 +50,7 @@ What this gives you:
 
 - readable text extracted from the video
 - segment-level timestamps for traceability
-- a structure that can later be chunked or indexed
+- the raw transcription layer before downstream grouping
 
 ### Metadata artifact
 
@@ -64,6 +64,7 @@ Example shape:
 
 ```json
 {
+  "job_id": "6c2105b2808a",
   "source_type": "local_video",
   "platform": "local",
   "input_path": "/absolute/path/to/downloaded-video.mp4",
@@ -76,6 +77,10 @@ Example shape:
   "transcript_segments": 48,
   "transcript_duration_seconds": 189.47,
   "whisper_model": "base",
+  "chunk_path": "/absolute/path/to/data/chunks/<job_id>.chunks.json",
+  "chunk_count": 4,
+  "chunking_strategy": "segment_grouped_char_limit_v1",
+  "chunking_version": "1.0",
   "created_at": "2026-04-07T22:23:35+08:00"
 }
 ```
@@ -83,8 +88,61 @@ Example shape:
 What this gives you:
 
 - traceability back to the original input file
-- links between source video, extracted audio, and transcript output
+- links between source video, extracted audio, transcript output, and chunk output
 - processing context for downstream systems
+
+### Chunk artifact
+
+Path pattern:
+
+```text
+data/chunks/<job_id>.chunks.json
+```
+
+Example shape:
+
+```json
+{
+  "source_type": "local_video",
+  "job_id": "6c2105b2808a",
+  "source_title": "sample-video",
+  "language": "zh",
+  "duration_seconds": 189.47,
+  "chunking_version": "1.0",
+  "chunking_strategy": "segment_grouped_char_limit_v1",
+  "chunking_config": {
+    "max_chars": 900,
+    "overlap_segments": 1
+  },
+  "source_transcript_path": "/absolute/path/to/data/transcripts/<job_id>.json",
+  "source_meta_path": "/absolute/path/to/data/meta/<job_id>.meta.json",
+  "chunk_count": 2,
+  "chunks": [
+    {
+      "chunk_id": "6c2105b2808a-chunk-000",
+      "index": 0,
+      "start": 0.0,
+      "end": 10.0,
+      "text": "walking along the road, brained back speed memories, I can't forget how we used to keep,",
+      "char_count": 94,
+      "token_estimate": 24,
+      "segment_start_index": 0,
+      "segment_end_index": 2,
+      "segment_count": 3,
+      "prev_chunk_id": null,
+      "next_chunk_id": "6c2105b2808a-chunk-001"
+    }
+  ]
+}
+```
+
+What this gives you:
+
+- a stable intermediate unit that downstream scripts can consume directly
+- a readable chunk text field instead of forcing every user to rebuild grouping logic from raw transcript segments
+- explicit time range and segment boundaries for citation and traceability
+- neighbor references for lightweight traversal or prompt assembly
+- the first practical integration point if you want to add embeddings, indexing, retrieval, or summary logic on top of `video-rag`
 
 ## Runtime directory layout
 
@@ -92,6 +150,8 @@ What this gives you:
 data/
 ├── audio/
 │   └── <job_id>.wav
+├── chunks/
+│   └── <job_id>.chunks.json
 ├── meta/
 │   └── <job_id>.meta.json
 └── transcripts/
@@ -100,13 +160,16 @@ data/
 
 ## Why these artifacts matter
 
-- They turn video content into text you can inspect, quote, and review
-- Timestamps make later source alignment and jump-back review possible
-- Metadata prevents transcript files from becoming detached from their source context
-- Together they form a cleaner starting point for chunking, indexing, retrieval, summary generation, and prompt context construction
+- Transcript turns video content into inspectable text
+- Metadata keeps source relationships and processing context intact
+- Chunks turn raw transcript output into retrieval-ready precursors without locking the repo into a specific vector stack
+- Together they provide a cleaner starting point for indexing, retrieval, summary generation, and prompt context construction
 
 ## Reliability notes
 
 - This release only supports downloaded local video files
+- The chunking strategy is structural and conservative, not semantic
 - The current output format is stable enough for downstream experimentation
 - Systematic benchmarking for long videos, multilingual audio, noisy inputs, and multi-speaker scenarios is still pending
+
+For the current contract and the fields we intend to keep stable, see [chunk-artifact-spec.md](chunk-artifact-spec.md).

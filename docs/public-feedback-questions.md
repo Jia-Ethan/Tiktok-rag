@@ -9,8 +9,8 @@ Use these questions if you want to collect focused early feedback on `video-rag`
 
 ## Next step after transcription
 
-3. After transcript generation, what do you want next: retrieval, summary, knowledge organization, or prompt context construction?
-4. What is the first missing step that stops this repo from being useful to you?
+3. Is the current chunk-ready output already enough for your downstream integration?
+4. If not, what is the first missing step that blocks you: retrieval, summary, knowledge organization, or something else?
 
 ## Input reality
 

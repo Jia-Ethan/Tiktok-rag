@@ -11,18 +11,17 @@ Suggested post body:
 ```md
 Hi everyone,
 
-`video-rag` currently turns downloaded local videos into timestamped transcript + metadata artifacts for downstream RAG workflows.
+`video-rag` currently turns downloaded local videos into transcript, metadata, and chunk-ready artifacts for downstream RAG workflows.
 
 What works today:
 
 - downloaded local video input
 - ffmpeg audio extraction
 - faster-whisper transcription
-- structured transcript and metadata output
+- structured transcript, metadata, and chunk-ready output
 
 What does not exist yet:
 
-- chunking
 - retrieval
 - Web UI
 
@@ -32,7 +31,7 @@ Questions:
 
 1. Where do your video files come from?
 2. What is your typical video duration and language mix?
-3. After transcription, what do you want next: retrieval, summary, knowledge organization, or prompt context construction?
+3. Is the current chunk-ready artifact already enough for your downstream integration, or what is still missing?
 4. What is the first missing step that stops this repo from being useful to you?
 
 Direct criticism is welcome too. “This is not useful unless X exists” is valuable feedback.
