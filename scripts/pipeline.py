@@ -14,12 +14,15 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 
 CST = timezone(timedelta(hours=8))
@@ -37,6 +40,10 @@ CHUNKING_STRATEGY = "segment_grouped_char_limit_v1"
 SUPPORTED_MODELS = ["tiny", "base", "small", "medium", "large-v3"]
 COMMON_LANGUAGE_CHOICES = ["auto", "zh", "en", "ja", "ko", "es", "fr", "de"]
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".m4v", ".webm"}
+DEFAULT_QA_RETRIEVAL_LIMIT = 5
+MAX_QA_RETRIEVAL_LIMIT = 8
+DEFAULT_SEARCH_LIMIT = 20
+WORD_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 
 
 class VideoRagError(RuntimeError):
@@ -65,6 +72,12 @@ class PipelineConfig:
 
 def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_path(value: Union[Path, str]) -> Path:
+    if isinstance(value, Path):
+        return value
+    return Path(value)
 
 
 def normalize_language(language: Optional[str]) -> str:
@@ -598,6 +611,572 @@ def build_manifest(
             "manifest_json": "One-file summary for UIs, automation, and downstream integrations.",
         },
     }
+
+
+def safe_load_json(path: Optional[Path]) -> Optional[dict]:
+    if not path or not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            return json.load(file)
+    except Exception:
+        return None
+
+
+def safe_read_text(path: Optional[Path]) -> str:
+    if not path or not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
+def resolve_path(path_value: Optional[str]) -> Optional[Path]:
+    if not path_value:
+        return None
+    try:
+        return Path(path_value).expanduser().resolve()
+    except Exception:
+        return None
+
+
+def compact_text(text: str) -> str:
+    return " ".join(text.split())
+
+
+def contains_cjk(text: str) -> bool:
+    return any(is_cjk_char(char) for char in text)
+
+
+def tokenize_search_text(text: str) -> list[str]:
+    return [token.lower() for token in WORD_RE.findall(text)]
+
+
+def cjk_ngrams(text: str, size: int = 2) -> set[str]:
+    chars = [char for char in text if is_cjk_char(char)]
+    if len(chars) < size:
+        return {"".join(chars)} if chars else set()
+    return {"".join(chars[index:index + size]) for index in range(len(chars) - size + 1)}
+
+
+def parse_created_at(value: Optional[str]) -> datetime:
+    if not value:
+        return datetime.min.replace(tzinfo=CST)
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return datetime.min.replace(tzinfo=CST)
+
+
+def format_duration_for_record(seconds: Optional[float]) -> str:
+    return format_seconds(seconds)
+
+
+def timestamp_slug() -> str:
+    return datetime.now(CST).strftime("%Y%m%d-%H%M%S")
+
+
+def sanitize_filename_part(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", value.strip())
+    return cleaned.strip("-._") or "video"
+
+
+def build_match_snippet(text: str, match_start: int = 0, match_end: int = 0, radius: int = 80) -> str:
+    if not text:
+        return ""
+    start = max(0, match_start - radius)
+    end = min(len(text), max(match_end, match_start) + radius)
+    snippet = text[start:end].strip()
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet = snippet + "..."
+    return snippet
+
+
+def score_chunk_text(query: str, chunk_text: str) -> tuple[int, str]:
+    query_raw = query.strip()
+    text_raw = chunk_text.strip()
+    if not query_raw or not text_raw:
+        return 0, ""
+
+    query_text = compact_text(query_raw).lower()
+    normalized_text = compact_text(text_raw)
+    haystack = normalized_text.lower()
+
+    score = 0
+    match_start = 0
+    match_end = 0
+
+    phrase_hits = haystack.count(query_text) if query_text else 0
+    if phrase_hits:
+        score += 120 + phrase_hits * 25
+        match_start = haystack.find(query_text)
+        match_end = match_start + len(query_text)
+
+    query_tokens = tokenize_search_text(query_text)
+    haystack_tokens = tokenize_search_text(haystack)
+    if query_tokens and haystack_tokens:
+        haystack_token_set = set(haystack_tokens)
+        overlap = [token for token in dict.fromkeys(query_tokens) if token in haystack_token_set]
+        if overlap:
+            score += len(overlap) * 18
+            if not match_end:
+                token = overlap[0]
+                match_start = haystack.find(token)
+                match_end = match_start + len(token)
+
+    if contains_cjk(query_raw):
+        query_ngrams = cjk_ngrams(query_raw)
+        text_ngrams = cjk_ngrams(text_raw)
+        if query_ngrams and text_ngrams:
+            ngram_overlap = query_ngrams & text_ngrams
+            if ngram_overlap:
+                score += len(ngram_overlap) * 10
+                if not match_end:
+                    first = sorted(ngram_overlap, key=len, reverse=True)[0]
+                    match_start = text_raw.find(first)
+                    match_end = match_start + len(first)
+
+    if score <= 0:
+        return 0, ""
+
+    snippet = build_match_snippet(text_raw, match_start=max(0, match_start), match_end=max(match_end, match_start + 1))
+    return score, snippet
+
+
+def search_chunk_artifact(query: str, chunk_artifact: dict, *, limit: int = DEFAULT_SEARCH_LIMIT) -> list[dict]:
+    if not query.strip():
+        return []
+
+    results: list[dict] = []
+    for chunk in chunk_artifact.get("chunks", []):
+        score, snippet = score_chunk_text(query, chunk.get("text", ""))
+        if score <= 0:
+            continue
+        results.append(
+            {
+                "result_id": f"{chunk['chunk_id']}-result",
+                "chunk_id": chunk["chunk_id"],
+                "chunk_index": chunk["index"],
+                "start": chunk["start"],
+                "end": chunk["end"],
+                "text": chunk.get("text", ""),
+                "match_snippet": snippet,
+                "score": score,
+            }
+        )
+
+    results.sort(key=lambda item: (-item["score"], item["start"], item["chunk_index"]))
+    return results[:limit]
+
+
+def load_history_records(data_dir: Union[Path, str]) -> list[dict]:
+    data_dir = ensure_path(data_dir)
+    manifests_dir = data_dir / "manifests"
+    if not manifests_dir.exists():
+        return []
+
+    records: list[dict] = []
+    for manifest_path in sorted(manifests_dir.glob("*.manifest.json")):
+        manifest = safe_load_json(manifest_path) or {}
+        artifact_paths = manifest.get("artifact_paths", {})
+        meta_path = resolve_path(artifact_paths.get("metadata_json"))
+        metadata = safe_load_json(meta_path) or {}
+        counts = manifest.get("counts") or {}
+
+        duration_seconds = manifest.get("duration_seconds")
+        if duration_seconds is None:
+            duration_seconds = metadata.get("transcript_duration_seconds")
+
+        record = {
+            "job_id": manifest.get("job_id") or manifest_path.stem.replace(".manifest", ""),
+            "source_title": manifest.get("source_title") or metadata.get("title") or manifest_path.stem,
+            "created_at": manifest.get("created_at") or metadata.get("created_at"),
+            "duration_seconds": duration_seconds,
+            "duration_label": format_duration_for_record(duration_seconds),
+            "language_detected": manifest.get("language_detected") or metadata.get("language_detected") or "unknown",
+            "segments": counts.get("segments", metadata.get("transcript_segments", 0)),
+            "chunks": counts.get("chunks", metadata.get("chunk_count", 0)),
+            "status": manifest.get("status", "completed"),
+            "manifest_path": str(manifest_path.resolve()),
+            "artifact_paths": artifact_paths,
+        }
+        records.append(record)
+
+    records.sort(key=lambda item: parse_created_at(item["created_at"]), reverse=True)
+    return records
+
+
+def load_video_bundle(job_id: str, data_dir: Union[Path, str]) -> dict:
+    data_dir = ensure_path(data_dir)
+    manifest_path = (data_dir / "manifests" / f"{job_id}.manifest.json").resolve()
+    manifest = safe_load_json(manifest_path)
+    if not manifest:
+        raise VideoRagError(
+            f"Manifest not found for job: {job_id}",
+            hint="Process the video again or refresh the history list.",
+        )
+
+    artifact_paths = manifest.get("artifact_paths", {})
+    meta_path = resolve_path(artifact_paths.get("metadata_json"))
+    chunk_path = resolve_path(artifact_paths.get("chunks_json"))
+    transcript_path = resolve_path(artifact_paths.get("transcript_json"))
+    text_path = resolve_path(artifact_paths.get("text_txt"))
+    preview_path = resolve_path(artifact_paths.get("preview_markdown"))
+
+    metadata = safe_load_json(meta_path) or {}
+    chunk_artifact = safe_load_json(chunk_path)
+    transcript = safe_load_json(transcript_path) or {}
+    if not chunk_artifact:
+        raise VideoRagError(
+            f"Chunk artifact missing for job: {job_id}",
+            hint="This video needs a valid `.chunks.json` file before search or QA can work.",
+        )
+
+    chunk_map = {chunk["chunk_id"]: chunk for chunk in chunk_artifact.get("chunks", [])}
+    return {
+        "job_id": job_id,
+        "manifest": manifest,
+        "metadata": metadata,
+        "transcript": transcript,
+        "chunks": chunk_artifact,
+        "chunk_map": chunk_map,
+        "text_content": safe_read_text(text_path),
+        "preview_content": safe_read_text(preview_path),
+        "artifact_paths": artifact_paths,
+        "paths": {
+            "manifest_path": str(manifest_path),
+            "meta_path": str(meta_path) if meta_path else "",
+            "chunk_path": str(chunk_path) if chunk_path else "",
+            "transcript_path": str(transcript_path) if transcript_path else "",
+            "text_path": str(text_path) if text_path else "",
+            "preview_path": str(preview_path) if preview_path else "",
+        },
+    }
+
+
+def build_qa_endpoint(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/chat/completions"):
+        return normalized
+    return normalized + "/chat/completions"
+
+
+def extract_message_text(message: dict) -> str:
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text", ""))
+        return "\n".join(part for part in parts if part).strip()
+    return ""
+
+
+def extract_json_object(text: str) -> dict:
+    fenced = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", text)
+    if fenced:
+        return json.loads(fenced.group(1))
+
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("No JSON object found in model response.")
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == "\"":
+                in_string = False
+            continue
+
+        if char == "\"":
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:index + 1])
+
+    raise ValueError("Incomplete JSON object in model response.")
+
+
+def call_openai_compatible_chat(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict],
+    temperature: float = 0.2,
+    timeout: int = 90,
+) -> dict:
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    request = urllib.request.Request(
+        build_qa_endpoint(base_url),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="ignore")
+        raise VideoRagError(
+            f"QA request failed with HTTP {exc.code}.",
+            hint=body[:500] or "Check the QA base URL, model, and API key.",
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise VideoRagError(
+            "Could not reach the QA model endpoint.",
+            hint="Check the QA base URL and your network connection.",
+        ) from exc
+
+
+def run_grounded_qa(
+    *,
+    question: str,
+    video_bundle: dict,
+    base_url: str,
+    model: str,
+    api_key: str,
+    top_k: int = DEFAULT_QA_RETRIEVAL_LIMIT,
+) -> dict:
+    question_text = question.strip()
+    if not question_text:
+        raise VideoRagError("Question cannot be empty.")
+    if not base_url.strip() or not model.strip() or not api_key.strip():
+        raise VideoRagError(
+            "QA configuration is incomplete.",
+            hint="Set QA base URL, model, and API key before asking a question.",
+        )
+
+    retrieval_limit = max(1, min(top_k, MAX_QA_RETRIEVAL_LIMIT))
+    search_results = search_chunk_artifact(question_text, video_bundle["chunks"], limit=MAX_QA_RETRIEVAL_LIMIT)
+    if not search_results:
+        return {
+            "question": question_text,
+            "answer": "当前视频内容中没有足够依据来回答这个问题。",
+            "citations": [],
+            "insufficient_evidence": True,
+            "retrieved_results": [],
+        }
+
+    retrieved_results = search_results[:retrieval_limit]
+    evidence_blocks = []
+    for result in retrieved_results:
+        chunk = video_bundle["chunk_map"][result["chunk_id"]]
+        evidence_blocks.append(
+            {
+                "chunk_id": chunk["chunk_id"],
+                "chunk_index": chunk["index"],
+                "start": chunk["start"],
+                "end": chunk["end"],
+                "text": chunk["text"],
+            }
+        )
+
+    system_prompt = (
+        "You answer questions using ONLY the provided video evidence.\n"
+        "Return valid JSON only.\n"
+        "If the evidence is insufficient, set `insufficient_evidence` to true, give a short answer saying there is not enough evidence, and return an empty citations array.\n"
+        "If the evidence is sufficient, keep the answer grounded and concise. Every citation must refer to one of the provided chunk_ids."
+    )
+    user_prompt = {
+        "question": question_text,
+        "video": {
+            "title": video_bundle["manifest"].get("source_title") or video_bundle["metadata"].get("title"),
+            "language": video_bundle["manifest"].get("language_detected"),
+            "duration_seconds": video_bundle["manifest"].get("duration_seconds"),
+        },
+        "evidence_chunks": evidence_blocks,
+        "required_output_schema": {
+            "answer": "string",
+            "insufficient_evidence": "boolean",
+            "citations": [
+                {
+                    "chunk_id": "string",
+                    "chunk_index": "integer",
+                    "start": "number",
+                    "end": "number",
+                    "support_summary": "string",
+                }
+            ],
+        },
+    }
+
+    response = call_openai_compatible_chat(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(user_prompt, ensure_ascii=False, indent=2)},
+        ],
+    )
+    try:
+        message = response["choices"][0]["message"]
+        parsed = extract_json_object(extract_message_text(message))
+    except Exception as exc:
+        raise VideoRagError(
+            "The QA model returned an unreadable response.",
+            hint="Try the question again, or switch to a model that reliably returns JSON.",
+        ) from exc
+
+    valid_chunk_ids = set(video_bundle["chunk_map"].keys())
+    citations = []
+    for citation in parsed.get("citations", []) or []:
+        chunk_id = citation.get("chunk_id")
+        if chunk_id not in valid_chunk_ids:
+            continue
+        chunk = video_bundle["chunk_map"][chunk_id]
+        citations.append(
+            {
+                "chunk_id": chunk_id,
+                "chunk_index": chunk["index"],
+                "start": chunk["start"],
+                "end": chunk["end"],
+                "support_summary": compact_text(str(citation.get("support_summary", "")).strip()) or chunk["text"][:120],
+            }
+        )
+
+    insufficient_evidence = bool(parsed.get("insufficient_evidence"))
+    answer = compact_text(str(parsed.get("answer", "")).strip())
+    if insufficient_evidence or not citations:
+        answer = answer or "当前视频内容中没有足够依据来回答这个问题。"
+        return {
+            "question": question_text,
+            "answer": answer,
+            "citations": [],
+            "insufficient_evidence": True,
+            "retrieved_results": retrieved_results,
+        }
+
+    return {
+        "question": question_text,
+        "answer": answer,
+        "citations": citations,
+        "insufficient_evidence": False,
+        "retrieved_results": retrieved_results,
+    }
+
+
+def export_directory(data_dir: Union[Path, str], job_id: str) -> Path:
+    data_dir = ensure_path(data_dir)
+    exports_dir = data_dir / "exports" / job_id
+    ensure_dir(exports_dir)
+    return exports_dir
+
+
+def export_search_results(data_dir: Union[Path, str], video_bundle: dict, query: str, results: list[dict]) -> Path:
+    exports_dir = export_directory(data_dir, video_bundle["job_id"])
+    filename = exports_dir / f"search-{timestamp_slug()}.md"
+    lines = [
+        f"# Search results · {video_bundle['manifest'].get('source_title')}",
+        "",
+        f"- Query: `{query}`",
+        f"- Match count: {len(results)}",
+        "",
+    ]
+    if not results:
+        lines.append("No matches found.")
+    else:
+        for result in results:
+            lines.extend(
+                [
+                    f"## Chunk {result['chunk_index'] + 1} · {format_seconds(result['start'])} - {format_seconds(result['end'])}",
+                    "",
+                    result["match_snippet"] or result["text"],
+                    "",
+                ]
+            )
+    write_text(filename, "\n".join(lines).strip() + "\n")
+    return filename
+
+
+def export_qa_result(data_dir: Union[Path, str], video_bundle: dict, qa_result: dict) -> Path:
+    exports_dir = export_directory(data_dir, video_bundle["job_id"])
+    filename = exports_dir / f"qa-{timestamp_slug()}.md"
+    lines = [
+        f"# QA result · {video_bundle['manifest'].get('source_title')}",
+        "",
+        f"## Question",
+        "",
+        qa_result["question"],
+        "",
+        "## Answer",
+        "",
+        qa_result["answer"],
+        "",
+        "## Citations",
+        "",
+    ]
+    if not qa_result.get("citations"):
+        lines.append("No citations available.")
+    else:
+        for citation in qa_result["citations"]:
+            lines.extend(
+                [
+                    f"- Chunk {citation['chunk_index'] + 1} · {format_seconds(citation['start'])} - {format_seconds(citation['end'])}",
+                    f"  {citation['support_summary']}",
+                ]
+            )
+    write_text(filename, "\n".join(lines).strip() + "\n")
+    return filename
+
+
+def export_video_summary(data_dir: Union[Path, str], video_bundle: dict) -> Path:
+    exports_dir = export_directory(data_dir, video_bundle["job_id"])
+    filename = exports_dir / f"summary-{timestamp_slug()}.md"
+    manifest = video_bundle["manifest"]
+    chunks = video_bundle["chunks"].get("chunks", [])
+    lines = [
+        f"# Video summary · {manifest.get('source_title')}",
+        "",
+        "## Overview",
+        "",
+        f"- Language: `{manifest.get('language_detected', 'unknown')}`",
+        f"- Duration: `{format_seconds(manifest.get('duration_seconds'))}`",
+        f"- Segments: `{manifest.get('counts', {}).get('segments', 0)}`",
+        f"- Chunks: `{manifest.get('counts', {}).get('chunks', 0)}`",
+        "",
+        "## Chunk overview",
+        "",
+    ]
+    if not chunks:
+        lines.append("No chunks available.")
+    else:
+        for chunk in chunks[:12]:
+            lines.extend(
+                [
+                    f"### Chunk {chunk['index'] + 1} · {format_seconds(chunk['start'])} - {format_seconds(chunk['end'])}",
+                    chunk["text"],
+                    "",
+                ]
+            )
+        if len(chunks) > 12:
+            lines.append(f"_... and {len(chunks) - 12} more chunks in the full chunk artifact._")
+    write_text(filename, "\n".join(lines).strip() + "\n")
+    return filename
 
 
 def write_json(path: Path, payload: dict) -> None:

@@ -14,6 +14,7 @@ venv/
 # Project data (personal / generated)
 data/audio/
 data/chunks/
+data/exports/
 data/manifests/
 data/transcripts/
 data/meta/

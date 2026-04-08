@@ -75,6 +75,11 @@ VIDEO_RAG_HOST=0.0.0.0 VIDEO_RAG_PORT=7860 python3 app/gradio_app.py
 - `text.txt`
   最适合直接阅读、复制、发给别人或贴进笔记软件。
 
+然后再做这两步：
+
+1. 打开 UI 里的「历史纪录 / 当前视频」
+2. 进入刚处理完的视频详情页，继续做关键词搜索或提问
+
 ## txt / md / json 各自适合什么场景
 
 - `txt`
@@ -108,3 +113,8 @@ VIDEO_RAG_HOST=0.0.0.0 VIDEO_RAG_PORT=7860 python3 app/gradio_app.py
 
 1. `preview/*.md`
 2. `text/*.txt`
+
+如果你已经想继续用这份结果，而不是只导出文字：
+
+3. 去 UI 的「历史纪录 / 当前视频」里做搜索
+4. 在同一页里直接提问，并查看引用的时间段

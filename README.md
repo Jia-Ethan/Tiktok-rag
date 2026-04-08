@@ -1,78 +1,95 @@
 # video-rag
 
-**Turn a local video file into readable text, chunk previews, and downloadable artifacts on your own machine.**
+**Turn one local video into readable text, searchable chunks, grounded answers, and reusable artifacts on your own machine.**
 
-把一个已经下载到本地的视频，处理成普通用户可直接阅读的文本结果，以及开发者后续可继续接入的结构化 artifact。
+`video-rag` 现在已经不只是“本地视频转文字工具”。
 
-当前版本最适合做的事情不是“完整 Video RAG”，而是先把视频内容稳定地转成：
+当前版本可以在同一个本地 UI 里完成这一条最小闭环：
 
-- 一份普通用户可以直接打开阅读的结果页
-- 一份可以复制、整理、做笔记的纯文本
-- 一组供开发者后续继续做 chunking / indexing / retrieval 的结构化文件
+- 选择一个本地视频并处理
+- 查看历史纪录
+- 进入单视频详情页
+- 搜索当前视频内容
+- 基于当前视频内容提问并得到带时间段引用的答案
+- 匯出搜索结果、问答结果或单视频摘要
+
+它仍然**不是**完整 Video RAG 平台。当前范围只围绕**本地单视频**，不包含 URL、线上部署、多用户、多视频知识库或向量检索。
 
 ![video-rag UI](docs/assets/ui-demo.png)
 
 ## 它现在能帮你做什么
 
-你选一个本地视频文件，点开始处理，然后会得到：
+你把一个已经下载到本地的视频交给 `video-rag` 后，会得到两层结果：
 
-- 可直接阅读的 transcript 文本
-- 带时间信息和 chunk 预览的结果页
-- 可下载的 `txt / md / json` 文件
-- 一份把所有输出文件串起来的 manifest
+- 普通用户可直接消费的结果：
+  - 可读 transcript
+  - `preview.md`
+  - 当前视频搜索
+  - grounded QA
+  - 可直接打开的匯出文件
+- 开发者可继续接入的结构层：
+  - `transcripts.json`
+  - `chunks.json`
+  - `meta.json`
+  - `manifest.json`
 
-你不需要先打开 JSON，第一次使用时直接看 `preview.md` 或 `text.txt` 就够了。
+如果你第一次试用，不需要先打开 JSON。先看 `preview.md`、`text.txt`，再去“历史纪录 / 当前视频”里做搜索和提问。
 
 ## 适合谁
 
-- 想把本地视频先转成可读文本的人
-- 想整理课程、访谈、分享、短视频内容的人
-- 想先跑通“视频 -> 文本结果”这一步，再决定后面要不要接检索、摘要或知识整理的人
-- 本地优先，不想先搭建数据库、向量库或网页服务的个人用户和独立开发者
+- 想把单个本地视频转成可读结果，再继续搜索或提问的人
+- 想做课程、访谈、分享、短视频内容整理的人
+- 想先在本地跑通“处理 -> 搜索 -> grounded QA”闭环的人
+- 本地优先，不想一开始就搭建数据库、向量库或线上服务的个人用户与独立开发者
 
 ## 不适合谁
 
-- 想直接贴 URL 就完成全流程的人
-- 期待项目现在已经自带问答、检索或知识库搜索的人
-- 需要在线部署、团队协作、多视频复杂管理的人
-- 需要高质量 semantic chunking 或系统 benchmark 结果的人
+- 想直接贴 URL 完成全流程的人
+- 期待它现在已经是多视频知识库或完整 Video RAG 平台的人
+- 需要线上部署、多人协作、多视频统一检索的人
+- 需要 semantic chunking 重做或大规模 benchmark 的人
 
-## 小白第一次使用路径
+## 第一次使用路径
 
 1. 准备一个已经下载到本地的视频文件
 2. 安装 `ffmpeg`
 3. 创建虚拟环境并安装依赖
 4. 运行本地 UI：`python3 app/gradio_app.py`
-5. 在浏览器里选择视频文件，点“开始处理”
-6. 处理完成后先看 `preview.md`，再看 `text.txt`
+5. 在浏览器里处理一个视频
+6. 处理完成后，切到“历史纪录 / 当前视频”
+7. 进入该视频详情页，继续搜索或提问
 
-更详细的普通用户说明见：
+更细的普通用户说明见：
 
 - [docs/beginner-quickstart.md](docs/beginner-quickstart.md)
 
-## 我处理完视频后会得到什么
-
-默认输出目录在 `data/` 下。
+## 处理完一个视频后，你会得到什么
 
 ### 最适合普通用户先打开的文件
 
 - `data/preview/<job_id>.md`
-  这是最适合第一次打开看的文件。它会告诉你这次处理的标题、语言、时长、chunk 预览，以及每个输出文件该怎么用。
+  这是第一次最适合打开看的文件。它会告诉你这次处理的标题、语言、时长、chunk 预览，以及每个输出文件该怎么用。
 - `data/text/<job_id>.txt`
-  这是最适合直接阅读、复制、贴进笔记软件或发给别人的纯文本版本。
+  这是最适合直接阅读、复制、发到笔记软件或发给别人的纯文本版本。
 
-### 其他输出文件
+### 最适合在 UI 里继续做的事
+
+- 在“历史纪录 / 当前视频”中打开当前视频详情页
+- 搜索关键词并定位到 chunk 与时间段
+- 基于当前视频内容提问
+- 查看引用对应的时间段和 chunk 内容
+- 匯出搜索结果、问答结果或单视频摘要
+
+### 其他结构化输出文件
 
 - `data/transcripts/<job_id>.json`
   原始时间戳 transcript，适合开发者或后续脚本处理。
 - `data/chunks/<job_id>.chunks.json`
-  chunk-ready 中间层 artifact，适合后续做 indexing、retrieval 或 summary pipeline。
+  当前视频搜索与 grounded QA 使用的 chunk-ready artifact，也是后续检索层的基础。
 - `data/meta/<job_id>.meta.json`
   处理元数据，负责把输入视频和输出文件关系串起来。
 - `data/manifests/<job_id>.manifest.json`
-  一次运行的摘要文件，适合 UI、自动化脚本或外部工具直接读取。
-- `data/audio/<job_id>.wav`
-  从原视频抽出的标准化音频。
+  一次运行的摘要文件，也是首页“历史纪录 / 视频库”的主资料源。
 
 ## 快速开始
 
@@ -107,7 +124,7 @@ python -m pip install -r requirements.txt
 python3 app/gradio_app.py
 ```
 
-启动后打开终端里显示的本地地址，通常是：
+默认本地地址通常是：
 
 ```text
 http://127.0.0.1:7860
@@ -128,55 +145,62 @@ python3 scripts/pipeline.py \
   --language auto
 ```
 
-## 语言支持
+## 本地搜索与问答怎么工作
 
-- 默认使用 `auto` 自动识别语言
-- 你也可以手动指定语言，例如 `zh`、`en`、`ja`
-- 当前公开样例和人工检查主要还是围绕中文语音场景
-- 英文、混合语言、噪音环境、多说话人场景理论上可通过 `faster-whisper` 处理，但还没有系统 benchmark
+- 搜索只针对**当前选中的一个视频**
+- 搜索范围只限当前视频的 `chunks.json`
+- 问答也只基于当前视频的 chunks，不做开放聊天
+- 答案必须带引用；引用至少对应 chunk 编号和时间段
+- 如果当前视频里没有足够依据，系统会明确说依据不足，不会硬答
 
-如果自动识别不稳定，优先试：
+### QA 配置
 
-- 手动指定语言
-- 换更短的视频片段
-- 先用 `base` 或 `small` 模型验证流程
+当前 grounded QA 使用 **OpenAI 兼容 API**。你可以用环境变量预设，也可以在 UI 的 QA 设置里临时填写：
 
-## 这个项目现在到底是什么
+- `VIDEO_RAG_QA_BASE_URL`
+- `VIDEO_RAG_QA_MODEL`
+- `VIDEO_RAG_QA_API_KEY`
 
-它现在是一个本地优先的视频 ingestion / transcription 工具，加上一层普通用户可读的本地结果页。
+API key 只保存在当前 UI 会话里，不写入磁盘。
+
+## 它现在是什么，不是什么
+
+它现在是：
+
+- 本地单视频处理工具
+- 本地单视频搜索与 grounded QA 闭环
+- 可继续输出结构化 artifact 的基础层
 
 它还不是：
 
-- 完整 Video RAG 产品
-- 自带 retrieval / 向量库 / Web 部署的平台
+- 完整 Video RAG 平台
+- 多视频统一知识库
 - URL 下载器
+- 向量库 / 线上检索 / Web 部署方案
 
-它下一步最合理的发展方向是：
+下一步最合理的发展方向仍然是：
 
-- 在当前 chunk-ready artifact 之上做最小 retrieval-ready loop
-
-## 输出为什么有价值
-
-- 普通用户不需要读 JSON，也能直接看到可读文本和结果页
-- 开发者不需要从 transcript 重新手工整理 chunk
-- 同一轮处理同时产出“可读层”和“结构层”
-- 时间戳和 chunk 边界还在，后面继续做引用、检索或 prompt construction 不需要返工
+- 在现有单视频 grounded QA 验证成立后，再考虑最小 multi-video retrieval-ready loop
 
 ## 已知限制
 
 - 只支持本地视频文件，不支持 URL
-- 还没有 retrieval、向量库、网页部署和多视频管理
-- 当前 chunking 是结构型、保守型策略，不是 semantic chunking
+- 搜索仍然是关键词匹配，不是 embedding / semantic retrieval
+- grounded QA 只针对当前单视频，不支持跨视频问答
+- 当前 chunking 仍然是结构型、保守型策略，不是 semantic chunking
 - 长视频、多语言、强噪音、多说话人场景还没有系统 benchmark
 
-## 普通用户文档
+## 文档
+
+### 普通用户文档
 
 - [docs/beginner-quickstart.md](docs/beginner-quickstart.md)
 
-## Developer docs
+### Developer docs
 
 - [docs/public-sample-output.md](docs/public-sample-output.md)
 - [docs/chunk-artifact-spec.md](docs/chunk-artifact-spec.md)
+- [docs/local-search-qa-architecture.md](docs/local-search-qa-architecture.md)
 - [docs/feedback-guide.md](docs/feedback-guide.md)
 
 ## 项目结构
@@ -189,6 +213,7 @@ video-rag/
 │   ├── assets/
 │   ├── beginner-quickstart.md
 │   ├── chunk-artifact-spec.md
+│   ├── local-search-qa-architecture.md
 │   ├── feedback-guide.md
 │   └── public-sample-output.md
 ├── scripts/
@@ -196,6 +221,7 @@ video-rag/
 ├── data/
 │   ├── audio/
 │   ├── chunks/
+│   ├── exports/
 │   ├── manifests/
 │   ├── meta/
 │   ├── preview/

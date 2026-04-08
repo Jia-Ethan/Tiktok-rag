@@ -219,6 +219,7 @@ What this gives you:
 - one machine-friendly summary of the whole run
 - a direct integration point for local UIs and automation
 - a reliable way to discover which output file a normal user should open first
+- the primary data source for the local history view / video library in the current app
 
 ## Runtime directory layout
 
@@ -246,6 +247,7 @@ data/
 - Metadata keeps source relationships and processing context intact
 - Readable text and preview outputs make the pipeline usable for non-technical users
 - Chunks turn raw transcript output into retrieval-ready precursors without locking the repo into a specific vector stack
+- Manifest now also anchors the local single-video library view, while chunks anchor local search and grounded QA
 - Together they provide a cleaner starting point for indexing, retrieval, summary generation, and prompt context construction
 
 ## Reliability notes
