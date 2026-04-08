@@ -1,6 +1,8 @@
-# Chunk artifact spec
+# Developer doc: chunk artifact spec
 
 This document defines the current chunk-ready artifact contract for `video-rag`.
+
+If you are using `video-rag` as a normal end user, you usually do not need this file first. Start with the generated `preview.md` or `text.txt` instead.
 
 The purpose of this artifact is to provide a stable intermediate layer between raw transcript output and future indexing, retrieval, summary, or prompt-construction logic.
 

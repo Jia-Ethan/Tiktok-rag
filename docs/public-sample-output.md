@@ -1,8 +1,10 @@
-# Public sample output
+# Developer doc: public sample output
 
 This sample shows what `video-rag` produces today and why those artifacts matter.
 
-The current release still does **not** implement retrieval. What it does provide now is a reliable path from downloaded video input to transcript, metadata, and chunk-ready artifacts.
+If you are just trying the tool for the first time, start with [beginner-quickstart.md](beginner-quickstart.md) and open the generated `preview.md` or `text.txt` first.
+
+The current release still does **not** implement retrieval. What it does provide now is a reliable path from downloaded video input to transcript, metadata, chunk-ready artifacts, readable text, and manifest outputs.
 
 ## Input
 
@@ -91,6 +93,34 @@ What this gives you:
 - links between source video, extracted audio, transcript output, and chunk output
 - processing context for downstream systems
 
+### Readable text artifact
+
+Path pattern:
+
+```text
+data/text/<job_id>.txt
+```
+
+What this gives you:
+
+- the simplest plain-text output for ordinary reading
+- a copy-friendly version for note-taking or pasting into other tools
+- a result that does not require opening JSON first
+
+### Preview artifact
+
+Path pattern:
+
+```text
+data/preview/<job_id>.md
+```
+
+What this gives you:
+
+- a beginner-friendly result page
+- title, time, file guide, and chunk preview in one place
+- the best first file to open after a run
+
 ### Chunk artifact
 
 Path pattern:
@@ -144,6 +174,52 @@ What this gives you:
 - neighbor references for lightweight traversal or prompt assembly
 - the first practical integration point if you want to add embeddings, indexing, retrieval, or summary logic on top of `video-rag`
 
+### Manifest artifact
+
+Path pattern:
+
+```text
+data/manifests/<job_id>.manifest.json
+```
+
+Example shape:
+
+```json
+{
+  "job_id": "6c2105b2808a",
+  "status": "completed",
+  "source_type": "local_video",
+  "source_title": "sample-video",
+  "language_requested": "auto",
+  "language_detected": "zh",
+  "duration_seconds": 189.47,
+  "model": "base",
+  "created_at": "2026-04-08T09:33:29+08:00",
+  "counts": {
+    "segments": 48,
+    "chunks": 4
+  },
+  "summary": {
+    "start_here": "/absolute/path/to/data/preview/<job_id>.md",
+    "best_plain_text": "/absolute/path/to/data/text/<job_id>.txt"
+  },
+  "artifact_paths": {
+    "text_txt": "/absolute/path/to/data/text/<job_id>.txt",
+    "preview_markdown": "/absolute/path/to/data/preview/<job_id>.md",
+    "transcript_json": "/absolute/path/to/data/transcripts/<job_id>.json",
+    "chunks_json": "/absolute/path/to/data/chunks/<job_id>.chunks.json",
+    "metadata_json": "/absolute/path/to/data/meta/<job_id>.meta.json",
+    "manifest_json": "/absolute/path/to/data/manifests/<job_id>.manifest.json"
+  }
+}
+```
+
+What this gives you:
+
+- one machine-friendly summary of the whole run
+- a direct integration point for local UIs and automation
+- a reliable way to discover which output file a normal user should open first
+
 ## Runtime directory layout
 
 ```text
@@ -152,8 +228,14 @@ data/
 │   └── <job_id>.wav
 ├── chunks/
 │   └── <job_id>.chunks.json
+├── manifests/
+│   └── <job_id>.manifest.json
 ├── meta/
 │   └── <job_id>.meta.json
+├── preview/
+│   └── <job_id>.md
+├── text/
+│   └── <job_id>.txt
 └── transcripts/
     └── <job_id>.json
 ```
@@ -162,6 +244,7 @@ data/
 
 - Transcript turns video content into inspectable text
 - Metadata keeps source relationships and processing context intact
+- Readable text and preview outputs make the pipeline usable for non-technical users
 - Chunks turn raw transcript output into retrieval-ready precursors without locking the repo into a specific vector stack
 - Together they provide a cleaner starting point for indexing, retrieval, summary generation, and prompt context construction
 
