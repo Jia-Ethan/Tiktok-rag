@@ -1,9 +1,9 @@
-# Roadmap / feedback seed
+# Discussion seed
 
 Suggested GitHub Discussion title:
 
 ```text
-Roadmap feedback: what should come right after local video transcription?
+What would make video-rag useful in your workflow?
 ```
 
 Suggested post body:
@@ -11,7 +11,7 @@ Suggested post body:
 ```md
 Hi everyone,
 
-`video-rag` currently turns downloaded local videos into timestamped transcript + metadata artifacts for downstream LLM workflows.
+`video-rag` currently turns downloaded local videos into timestamped transcript + metadata artifacts for downstream RAG workflows.
 
 What works today:
 
@@ -26,14 +26,14 @@ What does not exist yet:
 - retrieval
 - Web UI
 
-I would love feedback on what should come next.
+I would love feedback on what would make this repository useful enough to stay in your workflow.
 
 Questions:
 
-1. Would a downloaded-video-first workflow already be useful for you?
-2. After transcription, what matters more: chunking, retrieval, or artifact structure improvements?
-3. If you work with video knowledge, what workflow are you trying to enable for your LLM?
-4. Should this stay developer-first, or become more productized over time?
+1. Where do your video files come from?
+2. What is your typical video duration and language mix?
+3. After transcription, what do you want next: retrieval, summary, knowledge organization, or prompt context construction?
+4. What is the first missing step that stops this repo from being useful to you?
 
 Direct criticism is welcome too. “This is not useful unless X exists” is valuable feedback.
 ```

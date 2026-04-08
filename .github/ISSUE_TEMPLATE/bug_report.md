@@ -26,6 +26,7 @@ What should have happened?
 - Python version:
 - ffmpeg version:
 - command used:
+- sample input type:
 
 ## Logs or screenshots
 

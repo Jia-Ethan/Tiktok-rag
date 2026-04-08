@@ -1,10 +1,43 @@
 # video-rag
 
-Turn downloaded videos into timestamped, LLM-ready knowledge artifacts.
+**A local-first ingestion foundation that turns downloaded videos into timestamped text assets for downstream RAG workflows.**
 
-把已下载的视频文件转成带时间戳、适合后续 RAG/LLM 工作流使用的结构化知识材料。
+一个本地优先的 ingestion foundation，把已下载视频转成带时间戳的文本资产，供后续 RAG 工作流继续使用。
+
+当前版本的核心价值不是“已经做完 Video RAG”，而是先把视频进入 RAG 工作流前最容易失真、最难复用的第一步做成一个干净、公开、可检查的基础层。
 
 ![CLI demo](docs/assets/cli-demo.svg)
+
+## What this repo is today
+
+`video-rag` is a single-video ingestion and transcription foundation for developers who already have downloaded video files and want clean transcript + metadata artifacts for downstream processing.
+
+它现在是一个单视频 ingestion / transcription foundation。输入是已下载到本地的视频文件，输出是后续可以继续加工的 transcript 和 metadata artifacts。
+
+## What it is not yet
+
+It is **not** a full Video RAG product yet. It does not support URL input, chunking, vector storage, retrieval, Web UI, or batch ingestion in the current release.
+
+它**还不是**一个完整的 Video RAG 产品。当前版本不支持 URL 输入，也没有 chunking、向量库、retrieval、Web UI 或批量处理。
+
+## What comes next
+
+The next step is to turn single-video text artifacts into chunk-ready output, then build a minimal retrieval-ready loop on top of that foundation.
+
+下一步不是盲目加功能，而是先把单视频文本资产变成 chunk-ready 输出，再往最小可检索闭环推进。
+
+## Who this is for
+
+- Local-first AI engineers and indie developers
+- Builders who already have downloaded videos and want text assets they can inspect, cite, chunk, index, summarize, or feed into prompts
+- People building early-stage video knowledge workflows before retrieval and UI layers exist
+
+## Who this is not for yet
+
+- Users who want to paste a URL and get a full workflow immediately
+- Users who expect built-in question answering or searchable retrieval today
+- Non-technical users who need a polished product UI
+- Teams that need batch ingestion, collaboration, or operational workflows right away
 
 ## What it does
 
@@ -13,48 +46,40 @@ Turn downloaded videos into timestamped, LLM-ready knowledge artifacts.
 - Transcribes speech with `faster-whisper`
 - Writes transcript JSON and metadata JSON for downstream processing
 
-## 它能做什么
-
-- 接收已经下载到本地的视频文件，例如 `.mp4`、`.mov`、`.mkv`
-- 使用 `ffmpeg` 抽取 16kHz 单声道音频
-- 使用 `faster-whisper` 进行语音转写
-- 输出 transcript JSON 和 metadata JSON，方便后续做检索、摘要和知识整理
-
-## Why it matters for LLM workflows
-
-Most video knowledge is trapped inside audio. `video-rag` focuses on the first reliable step: turning downloaded videos into inspectable text artifacts that can later be chunked, indexed, retrieved, summarized, or injected into prompts.
-
-This release is intentionally narrow. It does not pretend to be a full RAG product yet. It gives you a clean ingestion foundation.
-
-## 为什么对 LLM 工作流有价值
-
-大量视频里的有效信息，其实都被困在音频里。`video-rag` 先把最可靠的第一步做好：把已经下载的视频，转成可检查、可复用、可继续加工的文本材料。
-
-这一版不会假装自己已经是完整的 RAG 产品。它更像一条干净、稳定的前置处理管线，为后续 chunking、索引、检索、摘要和提示词上下文构建打基础。
-
 ## Demo output
 
-The current public demo takes one downloaded local video file and produces:
+The current public demo takes one downloaded local video file and produces three artifacts:
 
 - `data/audio/<job_id>.wav`
 - `data/transcripts/<job_id>.json`
 - `data/meta/<job_id>.meta.json`
 
-See the sample output:
+These are not just debug files. They are the first reusable layer of a later video knowledge workflow.
+
+See the public sample output:
 
 - [docs/public-sample-output.md](docs/public-sample-output.md)
 
-## 示例输出
+## Why this output is useful
 
-当前公开演示使用一段已经下载到本地的视频作为输入，输出三类文件：
+- The transcript turns video content into inspectable and reviewable text
+- Metadata preserves source, file relationship, and processing context for traceability
+- Timestamps make later citation, jump-back review, and source alignment more reliable
+- These artifacts are the natural input layer for chunking, indexing, retrieval, summary generation, and prompt context construction
 
-- `data/audio/<job_id>.wav`
-- `data/transcripts/<job_id>.json`
-- `data/meta/<job_id>.meta.json`
+## Why not just use a quick Whisper script?
 
-具体样例可见：
+- `video-rag` is local-first and built around downloaded videos as a stable ingestion boundary
+- It produces structured artifacts, not just one-off text output
+- Transcript + metadata + timestamps form a better system starting point than a disposable script result
+- The repo is public, inspectable, and easier to extend into a larger workflow than an ad hoc local script
 
-- [docs/public-sample-output.md](docs/public-sample-output.md)
+## Use cases
+
+- Turning downloaded videos into text assets for later retrieval work
+- Preparing transcript material before summary, outline, or note generation
+- Building a video knowledge archive with source traceability
+- Creating prompt-ready context from videos without manually replaying the source
 
 ## Quickstart
 
@@ -100,99 +125,78 @@ python3 scripts/pipeline.py \
   --model small
 ```
 
-## 快速开始
-
-### 依赖
-
-- Python 3.9+
-- `ffmpeg`
-
-安装 `ffmpeg`：
-
-```bash
-# macOS
-brew install ffmpeg
-
-# Ubuntu / Debian
-sudo apt install ffmpeg
-```
-
-### 安装
-
-```bash
-git clone https://github.com/Jia-Ethan/video-rag.git
-cd video-rag
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 运行
-
-```bash
-python3 scripts/pipeline.py \
-  --input /path/to/downloaded-video.mp4 \
-  --output-dir ./data
-```
-
-可选模型参数：
-
-```bash
-python3 scripts/pipeline.py \
-  --input /path/to/downloaded-video.mp4 \
-  --output-dir ./data \
-  --model small
-```
-
 ## Supported input
 
 - Downloaded local video files only
 - Recommended formats: `.mp4`, `.mov`, `.mkv`
 
-## 当前支持的输入
+## Output artifacts
 
-- 只支持已经下载到本地的视频文件
-- 推荐格式：`.mp4`、`.mov`、`.mkv`
+### `data/audio/<job_id>.wav`
 
-## Current limitations
+Normalized 16kHz mono WAV audio extracted from the source video.
+
+### `data/transcripts/<job_id>.json`
+
+Timestamped transcript output from `faster-whisper`, including segment timing and optional word-level timing when available.
+
+### `data/meta/<job_id>.meta.json`
+
+Processing metadata that links the original input file, generated audio, transcript path, segment count, and model choice.
+
+## Known limitations
 
 - URL inputs are not supported in this release
 - No chunking, vector store, retrieval UI, or Web app yet
 - No batch ingestion yet
+- Long-video behavior has not been systematically characterized
+- Multi-language, noisy audio, and multi-speaker handling are not yet systematically validated
 
-## 当前边界
+## Evaluation status
 
-- 这一版不支持任何 URL 输入
-- 这一版还没有 chunking、向量库、检索界面和 Web UI
-- 这一版还不支持批量处理
+Current validation is limited to smoke tests and sample-level verification.
+
+- Basic local ingestion and transcription flow is working
+- Output structure is stable enough to build against
+- Systematic benchmarking for long videos, multilingual audio, noisy inputs, and performance has **not** been completed yet
 
 ## Roadmap
 
-1. Add chunk-ready transcript output for downstream retrieval
-2. Add a minimal retrieval layer so the “RAG” part becomes directly demoable
-3. Improve artifact quality and structure for longer video workflows
+### Phase 1 — Single video to usable text asset
 
-## 路线图
+Users get one downloaded video turned into transcript + metadata artifacts they can inspect and reuse. This is the foundation that makes later retrieval work possible without redoing ingestion.
 
-1. 增加面向后续检索的 chunk-ready 输出
-2. 增加最小可演示的 retrieval 层，让 “RAG” 更名副其实
-3. 优化更长视频场景下的输出质量和结构
+### Phase 2 — Single video to minimal retrieval-ready loop
+
+Users get chunk-ready output first, then a minimal retrieval-ready layer on top of it. This is the critical step that turns the repo from ingestion foundation into a first real closed loop.
+
+### Phase 3 — Multi-video retrieval and organization
+
+Users get a path from one processed video to a searchable multi-video corpus. This matters because knowledge workflows become more valuable once artifacts can be grouped and queried across sources.
+
+### Phase 4 — Better reliability for longer and noisier videos
+
+Users get stronger output quality and more trustworthy behavior on longer, messier real-world inputs. This matters because practical adoption depends on robustness, not just happy-path demos.
+
+## What feedback is most helpful
+
+The most useful feedback right now is not “looks cool,” but real workflow context:
+
+- Where your videos come from
+- Typical video duration
+- Main language or language mix
+- Whether your next step is retrieval, summary, knowledge organization, or prompt context construction
+- What would make this repo useful enough to stay in your workflow
+
+If you want a quick guide for giving useful feedback, see:
+
+- [docs/feedback-guide.md](docs/feedback-guide.md)
 
 ## Feedback
 
-If you are building video knowledge workflows and want to talk, I would love to hear from you.
-
-- GitHub Discussions: [github.com/Jia-Ethan/video-rag/discussions](https://github.com/Jia-Ethan/video-rag/discussions)
-- GitHub Issues: use issues for bugs or scoped feature requests
-- Email: `ethan_pier@icloud.com`
-
-## 联系方式
-
-如果你也在做视频知识库、RAG 或 LLM 工作流，欢迎直接联系我交流。
-
-- GitHub Discussions： [github.com/Jia-Ethan/video-rag/discussions](https://github.com/Jia-Ethan/video-rag/discussions)
-- GitHub Issues：适合反馈 bug 或明确的功能请求
-- 邮箱：`ethan_pier@icloud.com`
+- Roadmap and workflow feedback: [GitHub Discussions](https://github.com/Jia-Ethan/video-rag/discussions)
+- Reproducible bugs or scoped feature requests: [GitHub Issues](https://github.com/Jia-Ethan/video-rag/issues)
+- Direct contact: `ethan_pier@icloud.com`
 
 ## Project structure
 
@@ -202,6 +206,7 @@ video-rag/
 ├── docs/
 │   ├── assets/
 │   ├── discussions/
+│   ├── feedback-guide.md
 │   └── public-sample-output.md
 ├── scripts/
 │   └── pipeline.py

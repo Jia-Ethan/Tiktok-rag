@@ -1,15 +1,17 @@
 # Public sample output
 
-This sample shows the current public shape of `video-rag`.
+This sample shows what `video-rag` produces today and why those artifacts matter.
 
-The input is one downloaded local video file. The purpose of this document is to make the artifact structure easy to inspect before retrieval features exist.
+The current release does **not** implement retrieval yet. Its job is to produce stable, inspectable text assets that later retrieval layers can build on.
 
 ## Input
 
 - Source type: downloaded local video file
-- Output mode: local video transcription pipeline
+- Processing mode: single-video local ingestion and transcription
 
-## Transcript artifact
+## Artifact schema
+
+### Transcript artifact
 
 Path pattern:
 
@@ -44,7 +46,13 @@ Example shape:
 }
 ```
 
-## Metadata artifact
+What this gives you:
+
+- readable text extracted from the video
+- segment-level timestamps for traceability
+- a structure that can later be chunked or indexed
+
+### Metadata artifact
 
 Path pattern:
 
@@ -72,6 +80,12 @@ Example shape:
 }
 ```
 
+What this gives you:
+
+- traceability back to the original input file
+- links between source video, extracted audio, and transcript output
+- processing context for downstream systems
+
 ## Runtime directory layout
 
 ```text
@@ -84,8 +98,15 @@ data/
     └── <job_id>.json
 ```
 
-## Notes
+## Why these artifacts matter
 
-- This release only supports downloaded local video files.
-- The current focus is clean transcript and metadata generation.
-- Retrieval-related layers will come later.
+- They turn video content into text you can inspect, quote, and review
+- Timestamps make later source alignment and jump-back review possible
+- Metadata prevents transcript files from becoming detached from their source context
+- Together they form a cleaner starting point for chunking, indexing, retrieval, summary generation, and prompt context construction
+
+## Reliability notes
+
+- This release only supports downloaded local video files
+- The current output format is stable enough for downstream experimentation
+- Systematic benchmarking for long videos, multilingual audio, noisy inputs, and multi-speaker scenarios is still pending
