@@ -6,7 +6,7 @@ If you are using `video-rag` as a normal end user, you usually do not need this 
 
 The purpose of this artifact is to provide a stable intermediate layer between raw transcript output and future indexing, retrieval, summary, or prompt-construction logic.
 
-In the current app release, this file is also the direct data source for local single-video keyword search and grounded QA.
+In the current app release, this file is also the direct data source for local single-video keyword search and grounded QA inside the personal video library UI.
 
 ## File location
 

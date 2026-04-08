@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Gradio app for video-rag."""
+"""Local Gradio app for video-rag personal video library MVP."""
 import os
 import sys
 from pathlib import Path
@@ -49,24 +49,26 @@ from scripts.pipeline import (  # noqa: E402
     DEFAULT_CHUNK_MAX_CHARS,
     DEFAULT_CHUNK_OVERLAP_SEGMENTS,
     DEFAULT_LANGUAGE,
+    DEFAULT_LIBRARY_SEARCH_LIMIT,
     DEFAULT_QA_RETRIEVAL_LIMIT,
     DEFAULT_SEARCH_LIMIT,
     DEFAULT_WHISPER_MODEL,
-    MAX_QA_RETRIEVAL_LIMIT,
     PipelineConfig,
     SUPPORTED_MODELS,
     VideoRagError,
     build_chunk_preview_markdown,
-    contains_cjk,
     export_qa_result,
     export_search_results,
     export_video_summary,
+    filter_video_library_records,
     format_seconds,
-    load_history_records,
     load_video_bundle,
+    load_video_library_records,
     run_grounded_qa,
     run_pipeline,
     search_chunk_artifact,
+    search_video_library,
+    update_library_record,
 )
 
 
@@ -77,12 +79,34 @@ DEFAULT_QA_BASE_URL = os.getenv("VIDEO_RAG_QA_BASE_URL", "")
 DEFAULT_QA_MODEL = os.getenv("VIDEO_RAG_QA_MODEL", "")
 DEFAULT_QA_API_KEY = os.getenv("VIDEO_RAG_QA_API_KEY", "")
 
+DEFAULT_LANGUAGE_FILTER = "all"
+DEFAULT_STAR_FILTER = "all"
+DEFAULT_SORT_ORDER = "recent_desc"
 
-def history_choice_label(record: dict) -> str:
+
+def safe_file_list(paths):
+    files = []
+    for item in paths:
+        if not item:
+            continue
+        path = Path(item)
+        if path.exists():
+            files.append(str(path))
+    return files
+
+
+def star_icon(starred: bool) -> str:
+    return "★" if starred else "☆"
+
+
+def library_choice_label(record: dict) -> str:
+    display_title = record.get("display_title") or record.get("title") or record.get("video_id")
     return (
-        f"{record['source_title']} | {record['created_at'] or 'unknown time'} | "
-        f"{record['duration_label']} | {record['language_detected']} | "
-        f"segments {record['segments']} | chunks {record['chunks']} | {record['status']}"
+        f"{star_icon(record.get('starred', False))} {display_title} | "
+        f"{record.get('created_at') or 'unknown time'} | "
+        f"{format_seconds(record.get('duration_seconds'))} | "
+        f"{record.get('language', 'unknown')} | "
+        f"{record.get('status', 'completed')}"
     )
 
 
@@ -95,91 +119,260 @@ def chunk_choice_label(chunk: dict) -> str:
 
 def search_choice_label(result: dict) -> str:
     return (
-        f"Chunk {result['chunk_index'] + 1} | {format_seconds(result['start'])}-{format_seconds(result['end'])} | "
+        f"Chunk {result['chunk_index'] + 1} | "
+        f"{format_seconds(result['start'])}-{format_seconds(result['end'])} | "
         f"{result['match_snippet'] or result['text'][:100]}"
     )
 
 
 def citation_choice_label(citation: dict) -> str:
     return (
-        f"Chunk {citation['chunk_index'] + 1} | {format_seconds(citation['start'])}-{format_seconds(citation['end'])} | "
+        f"Chunk {citation['chunk_index'] + 1} | "
+        f"{format_seconds(citation['start'])}-{format_seconds(citation['end'])} | "
         f"{citation['support_summary']}"
     )
 
 
-def build_history_choices(records: list[dict]) -> list[tuple[str, str]]:
-    return [(history_choice_label(record), record["job_id"]) for record in records]
-
-
-def history_summary_markdown(records: list[dict]) -> str:
-    if not records:
-        return "## 历史纪录\n\n还没有处理纪录。先在左侧处理一个本地视频。"
-
-    lines = [
-        "## 历史纪录 / 视频库",
-        "",
-        f"- 可用单视频纪录：`{len(records)}`",
-        "- 点击下面任一纪录，就能进入当前视频详情页、搜索与问答。",
-        "",
-    ]
-    for record in records[:8]:
-        lines.append(
-            f"- `{record['source_title']}` · {record['created_at'] or 'unknown time'} · "
-            f"{record['duration_label']} · {record['language_detected']} · "
-            f"segments {record['segments']} · chunks {record['chunks']} · {record['status']}"
-        )
-    if len(records) > 8:
-        lines.append(f"- ... 还有 {len(records) - 8} 条更早的纪录")
-    return "\n".join(lines)
-
-
-def empty_chunk_browser_message() -> str:
-    return "## 当前视频内容\n\n先从历史纪录里选一个视频，或先处理一个新视频。"
-
-
-def empty_search_message() -> str:
-    return "## 内容搜索\n\n输入关键词后，这里会显示当前视频的命中 chunk。"
-
-
-def empty_qa_message() -> str:
+def library_search_choice_label(result: dict) -> str:
     return (
-        "## 问答区\n\n"
-        "问题会只基于当前视频的 chunks 回答。\n\n"
-        "- 先在下方 QA 设置里填好 OpenAI 兼容接口\n"
-        "- 再输入问题\n"
-        "- 若检索不到足够依据，系统会明确提示依据不足"
+        f"{result['display_title']} | Chunk {result['chunk_index'] + 1} | "
+        f"{format_seconds(result['start'])}-{format_seconds(result['end'])} | "
+        f"{result['match_snippet']}"
     )
 
 
-def detail_overview_markdown(bundle: dict) -> str:
+def build_library_choices(records: list[dict]) -> list[tuple[str, str]]:
+    return [(library_choice_label(record), record["video_id"]) for record in records]
+
+
+def build_language_filter_update(all_records: list[dict], selected_language: str):
+    languages = sorted({record.get("language", "unknown") for record in all_records if record.get("language")})
+    choices = [("全部语言", DEFAULT_LANGUAGE_FILTER)] + [(language, language) for language in languages]
+    valid_values = {value for _, value in choices}
+    value = selected_language if selected_language in valid_values else DEFAULT_LANGUAGE_FILTER
+    return gr.update(choices=choices, value=value)
+
+
+def build_library_selector_update(records: list[dict], selected_video_id: Optional[str]):
+    choices = build_library_choices(records)
+    valid_ids = {value for _, value in choices}
+    value = selected_video_id if selected_video_id in valid_ids else (choices[0][1] if choices else None)
+    return gr.update(choices=choices, value=value)
+
+
+def build_chunk_selector_update(bundle: dict, selected_chunk_id: Optional[str]):
+    choices = [(chunk_choice_label(chunk), chunk["chunk_id"]) for chunk in bundle["chunks"].get("chunks", [])]
+    valid_ids = {value for _, value in choices}
+    value = selected_chunk_id if selected_chunk_id in valid_ids else (choices[0][1] if choices else None)
+    return gr.update(choices=choices, value=value)
+
+
+def build_search_results_update(results: list[dict], selected_chunk_id: Optional[str] = None):
+    if not results:
+        return gr.update(choices=[], value=None)
+    choices = [(search_choice_label(result), result["chunk_id"]) for result in results]
+    valid_ids = {value for _, value in choices}
+    value = selected_chunk_id if selected_chunk_id in valid_ids else None
+    return gr.update(choices=choices, value=value)
+
+
+def build_citation_update(citations: list[dict], selected_chunk_id: Optional[str] = None):
+    if not citations:
+        return gr.update(choices=[], value=None)
+    choices = [(citation_choice_label(citation), citation["chunk_id"]) for citation in citations]
+    valid_ids = {value for _, value in choices}
+    value = selected_chunk_id if selected_chunk_id in valid_ids else None
+    return gr.update(choices=choices, value=value)
+
+
+def build_library_search_results_update(results: list[dict], selected_result_id: Optional[str] = None):
+    if not results:
+        return gr.update(choices=[], value=None)
+    choices = [(library_search_choice_label(result), result["result_id"]) for result in results]
+    valid_ids = {value for _, value in choices}
+    value = selected_result_id if selected_result_id in valid_ids else None
+    return gr.update(choices=choices, value=value)
+
+
+def empty_library_overview_markdown() -> str:
+    return "## 个人视频库\n\n还没有可用视频。先到右侧“处理新视频”里处理一个本地视频。"
+
+
+def render_library_overview_markdown(all_records: list[dict], visible_records: list[dict]) -> str:
+    if not all_records:
+        return empty_library_overview_markdown()
+
+    lines = [
+        "## 个人视频库",
+        "",
+        f"- 总资料数：`{len(all_records)}`",
+        f"- 当前筛选后：`{len(visible_records)}`",
+        "- 每条资料都代表一次本地处理结果；你可以收藏、改显示标题、加标签、写备注，并在以后再进入。",
+        "",
+    ]
+
+    if not visible_records:
+        lines.extend(
+            [
+                "当前筛选下没有结果。",
+                "",
+                "你可以调整标题关键词、语言、收藏状态或排序方式。",
+            ]
+        )
+        return "\n".join(lines)
+
+    for record in visible_records[:10]:
+        tags = ", ".join(record.get("tags", [])) or "暂无"
+        summary = record.get("summary", "") or "暂无摘要预览。"
+        if len(summary) > 180:
+            summary = summary[:177].rstrip() + "..."
+        lines.extend(
+            [
+                f"### {star_icon(record.get('starred', False))} {record.get('display_title') or record.get('title')}",
+                "",
+                f"- 处理时间：`{record.get('created_at') or 'unknown'}`",
+                f"- 时长：`{format_seconds(record.get('duration_seconds'))}`",
+                f"- 语言：`{record.get('language', 'unknown')}`",
+                f"- 状态：`{record.get('status', 'completed')}`",
+                f"- 标签：`{tags}`",
+                f"- 摘要预览：{summary}",
+                "",
+            ]
+        )
+
+    if len(visible_records) > 10:
+        lines.append(f"_... 还有 {len(visible_records) - 10} 条资料未展开显示。_")
+    return "\n".join(lines)
+
+
+def empty_library_search_message() -> str:
+    return (
+        "## 跨视频关键词搜索\n\n"
+        "这里会在当前筛选范围内搜索所有视频的 chunk 内容，并把结果直接定位回具体视频和时间段。"
+    )
+
+
+def empty_detail_summary() -> str:
+    return "## 视频摘要卡\n\n先从视频库里选一个视频。"
+
+
+def empty_detail_info() -> str:
+    return "## 关键信息\n\n先从视频库里选一个视频。"
+
+
+def empty_artifact_paths() -> str:
+    return "## 本地文件入口\n\n当前还没有可展示的本地文件路径。"
+
+
+def empty_saved_exports() -> str:
+    return "## 已保存结果\n\n当前视频还没有历史保存记录。"
+
+
+def empty_chunk_browser_message() -> str:
+    return "## Chunk / 时间段浏览\n\n先从视频库里选一个视频。"
+
+
+def empty_search_message(bundle: Optional[dict] = None) -> str:
+    if not bundle:
+        return "## 当前视频搜索\n\n先从视频库里选一个视频。"
+    if not bundle.get("content_ready"):
+        return "## 当前视频搜索\n\n这个视频目前缺少可用的 chunk artifact，所以还不能搜索。"
+    return "## 当前视频搜索\n\n输入关键词后，这里会显示当前视频命中的 chunk。"
+
+
+def empty_qa_message(bundle: Optional[dict] = None) -> str:
+    if not bundle:
+        return "## grounded QA\n\n先从视频库里选一个视频。"
+    if not bundle.get("content_ready"):
+        return "## grounded QA\n\n这个视频目前缺少可用的 chunk artifact，所以还不能提问。"
+    return (
+        "## grounded QA\n\n"
+        "问题只会基于当前视频的 chunk 内容回答。\n\n"
+        "- 先配置 OpenAI 兼容接口\n"
+        "- 再输入问题\n"
+        "- 若没有足够依据，系统会明确拒答"
+    )
+
+
+def summary_card_markdown(bundle: dict) -> str:
+    record = bundle["library_record"]
+    summary = record.get("summary") or "当前还没有可用的摘要预览。"
+    return "\n".join(
+        [
+            "## 视频摘要卡",
+            "",
+            f"### {record.get('display_title') or record.get('title')}",
+            "",
+            summary,
+        ]
+    )
+
+
+def key_info_markdown(bundle: dict) -> str:
+    record = bundle["library_record"]
     manifest = bundle["manifest"]
     counts = manifest.get("counts", {})
+    source_path = record.get("source_file_path") or "unknown"
+    return "\n".join(
+        [
+            "## 关键信息区",
+            "",
+            f"- 原始标题：`{record.get('title')}`",
+            f"- 显示标题：`{record.get('display_title') or record.get('title')}`",
+            f"- 语言：`{record.get('language', 'unknown')}`",
+            f"- 时长：`{format_seconds(record.get('duration_seconds'))}`",
+            f"- 处理时间：`{record.get('created_at') or 'unknown'}`",
+            f"- 最近更新：`{record.get('updated_at') or record.get('created_at') or 'unknown'}`",
+            f"- 状态：`{record.get('status', 'completed')}`",
+            f"- Segments：`{counts.get('segments', bundle['metadata'].get('transcript_segments', 0))}`",
+            f"- Chunks：`{counts.get('chunks', bundle['metadata'].get('chunk_count', 0))}`",
+            f"- 收藏：`{'是' if record.get('starred') else '否'}`",
+            f"- 保存结果：`{len(record.get('saved_exports', []))}`",
+            f"- 来源文件：`{source_path}`",
+        ]
+    )
+
+
+def artifact_paths_markdown(bundle: dict) -> str:
+    artifact_paths = bundle["library_record"].get("artifact_paths", {})
+    exports_dir = artifact_paths.get("exports_dir") or bundle["paths"].get("exports_dir") or ""
     lines = [
-        f"## {manifest.get('source_title')}",
+        "## 本地文件入口",
         "",
-        "- 当前视频详情页已经直接连到 chunk / 搜索 / QA，不需要你先打开文件系统。",
-        "",
-        "### 概览信息",
-        "",
-        f"- 标题：`{manifest.get('source_title')}`",
-        f"- 语言：`{manifest.get('language_detected', 'unknown')}`",
-        f"- 时长：`{format_seconds(manifest.get('duration_seconds'))}`",
-        f"- 处理时间：`{manifest.get('created_at', 'unknown')}`",
-        f"- Segments：`{counts.get('segments', 0)}`",
-        f"- Chunks：`{counts.get('chunks', 0)}`",
-        "",
-        "### 当前可下载文件",
-        "",
-        f"- `preview.md`：第一次整体查看结果",
-        f"- `text.txt`：纯文本阅读与复制",
-        f"- `chunks.json`：当前视频的搜索 / QA / 后续检索基础",
-        f"- `manifest.json`：当前视频的一次运行摘要",
+        f"- `preview.md`：`{artifact_paths.get('preview_markdown', '')}`",
+        f"- `text.txt`：`{artifact_paths.get('text_txt', '')}`",
+        f"- `transcript.json`：`{artifact_paths.get('transcript_json', '')}`",
+        f"- `chunks.json`：`{artifact_paths.get('chunks_json', '')}`",
+        f"- `meta.json`：`{artifact_paths.get('metadata_json', '')}`",
+        f"- `manifest.json`：`{artifact_paths.get('manifest_json', '')}`",
+        f"- `video record`：`{artifact_paths.get('library_record_json', '')}`",
+        f"- `exports/`：`{exports_dir}`",
     ]
+    return "\n".join(lines)
+
+
+def saved_exports_markdown(bundle: dict) -> str:
+    saved_exports = bundle["library_record"].get("saved_exports", [])
+    if not saved_exports:
+        return empty_saved_exports()
+
+    lines = [
+        "## 已保存结果",
+        "",
+        "这些记录会保存在本地，并且和当前视频保持关联。",
+        "",
+    ]
+    for export in saved_exports[:12]:
+        lines.append(
+            f"- `{export.get('type', 'export')}` · {export.get('created_at', 'unknown')} · `{Path(export.get('path', '')).name}`"
+        )
+    if len(saved_exports) > 12:
+        lines.append(f"- ... 还有 {len(saved_exports) - 12} 条更早的保存记录")
     return "\n".join(lines)
 
 
 def build_artifact_downloads(bundle: dict) -> list[str]:
-    artifact_paths = bundle["manifest"].get("artifact_paths", {})
+    artifact_paths = bundle["library_record"].get("artifact_paths", {})
     keys = [
         "preview_markdown",
         "text_txt",
@@ -187,16 +380,18 @@ def build_artifact_downloads(bundle: dict) -> list[str]:
         "chunks_json",
         "metadata_json",
         "manifest_json",
+        "library_record_json",
     ]
-    downloads = []
-    for key in keys:
-        path = artifact_paths.get(key)
-        if path:
-            downloads.append(path)
-    return downloads
+    return safe_file_list([artifact_paths.get(key) for key in keys])
+
+
+def build_saved_export_downloads(bundle: dict) -> list[str]:
+    return safe_file_list([item.get("path") for item in bundle["library_record"].get("saved_exports", [])])
 
 
 def selected_chunk_markdown(bundle: dict, selected_chunk_id: str) -> str:
+    if not bundle.get("content_ready"):
+        return "## Chunk / 时间段浏览\n\n这个视频目前没有可用的 chunk artifact，暂时不能做定位浏览。"
     chunk = bundle["chunk_map"].get(selected_chunk_id)
     if not chunk:
         return empty_chunk_browser_message()
@@ -211,9 +406,7 @@ def selected_chunk_markdown(bundle: dict, selected_chunk_id: str) -> str:
             "",
             chunk["text"],
             "",
-            "### 全部 chunk 浏览",
-            "",
-            "下方列表可切换；搜索结果或引用也会把这里同步定位到对应 chunk。",
+            "下方列表可切换；当前视频搜索、跨视频搜索、引用点击都会把这里同步定位到对应时间段。",
         ]
     )
 
@@ -223,108 +416,163 @@ def initial_chunk_id(bundle: dict) -> str:
     return chunks[0]["chunk_id"] if chunks else ""
 
 
-def build_chunk_selector_update(bundle: dict, selected_chunk_id: str):
-    choices = [(chunk_choice_label(chunk), chunk["chunk_id"]) for chunk in bundle["chunks"].get("chunks", [])]
-    value = selected_chunk_id or (choices[0][1] if choices else None)
-    return gr.update(choices=choices, value=value)
+def detail_outputs_for_bundle(
+    bundle: dict,
+    *,
+    selected_chunk_id: Optional[str] = None,
+    organize_status: str = "",
+    export_status: str = "",
+    export_file: Optional[str] = None,
+):
+    record = bundle["library_record"]
+    current_chunk_id = selected_chunk_id if selected_chunk_id in bundle["chunk_map"] else initial_chunk_id(bundle)
+    return (
+        bundle["video_id"],
+        bundle,
+        summary_card_markdown(bundle),
+        key_info_markdown(bundle),
+        artifact_paths_markdown(bundle),
+        build_artifact_downloads(bundle),
+        record.get("display_title") or record.get("title") or bundle["video_id"],
+        ", ".join(record.get("tags", [])),
+        record.get("notes", ""),
+        bool(record.get("starred", False)),
+        organize_status,
+        saved_exports_markdown(bundle),
+        build_saved_export_downloads(bundle),
+        empty_search_message(bundle),
+        gr.update(choices=[], value=None),
+        empty_qa_message(bundle),
+        "",
+        gr.update(choices=[], value=None),
+        build_chunk_selector_update(bundle, current_chunk_id),
+        selected_chunk_markdown(bundle, current_chunk_id),
+        export_status,
+        export_file,
+    )
 
 
-def build_search_results_update(results: list[dict], selected_chunk_id: Optional[str] = None):
-    if not results:
-        return gr.update(choices=[], value=None)
-    choices = [(search_choice_label(result), result["chunk_id"]) for result in results]
-    value = selected_chunk_id if selected_chunk_id else None
-    if value and value not in {choice[1] for choice in choices}:
-        value = None
-    return gr.update(choices=choices, value=value)
-
-
-def build_citation_update(citations: list[dict], selected_chunk_id: Optional[str] = None):
-    if not citations:
-        return gr.update(choices=[], value=None)
-    choices = [(citation_choice_label(citation), citation["chunk_id"]) for citation in citations]
-    value = selected_chunk_id if selected_chunk_id else None
-    if value and value not in {choice[1] for choice in choices}:
-        value = None
-    return gr.update(choices=choices, value=value)
-
-
-def empty_detail_outputs():
+def empty_detail_outputs(
+    *,
+    organize_status: str = "",
+    export_status: str = "",
+    export_file: Optional[str] = None,
+):
     return (
         None,
         {},
-        "## 当前视频详情\n\n先在左侧处理一个视频，或从历史纪录中选一个视频。",
-        gr.update(choices=[], value=None),
-        empty_chunk_browser_message(),
+        empty_detail_summary(),
+        empty_detail_info(),
+        empty_artifact_paths(),
+        [],
+        "",
+        "",
+        "",
+        False,
+        organize_status,
+        empty_saved_exports(),
         [],
         empty_search_message(),
         gr.update(choices=[], value=None),
         empty_qa_message(),
         "",
         gr.update(choices=[], value=None),
-        None,
-        "",
-        None,
+        gr.update(choices=[], value=None),
+        empty_chunk_browser_message(),
+        export_status,
+        export_file,
     )
 
 
-def load_selected_video(job_id: str):
-    if not job_id:
-        return empty_detail_outputs()
+def load_detail_view(
+    video_id: Optional[str],
+    *,
+    selected_chunk_id: Optional[str] = None,
+    organize_status: str = "",
+    export_status: str = "",
+    export_file: Optional[str] = None,
+):
+    if not video_id:
+        return empty_detail_outputs(
+            organize_status=organize_status,
+            export_status=export_status,
+            export_file=export_file,
+        )
 
     try:
-        bundle = load_video_bundle(job_id, DEFAULT_OUTPUT_DIR)
+        bundle = load_video_bundle(video_id, DEFAULT_OUTPUT_DIR)
     except VideoRagError as exc:
         return (
-            job_id,
+            video_id,
             {},
-            f"## 当前视频详情\n\n加载失败：\n\n{exc}",
-            gr.update(choices=[], value=None),
-            empty_chunk_browser_message(),
+            "## 视频摘要卡\n\n加载失败。",
+            f"## 关键信息\n\n{exc}",
+            empty_artifact_paths(),
+            [],
+            "",
+            "",
+            "",
+            False,
+            organize_status,
+            empty_saved_exports(),
             [],
             empty_search_message(),
             gr.update(choices=[], value=None),
             empty_qa_message(),
             "",
             gr.update(choices=[], value=None),
-            None,
-            "",
-            None,
+            gr.update(choices=[], value=None),
+            empty_chunk_browser_message(),
+            export_status,
+            export_file,
         )
 
-    selected_chunk_id = initial_chunk_id(bundle)
-    return (
-        job_id,
+    return detail_outputs_for_bundle(
         bundle,
-        detail_overview_markdown(bundle),
-        build_chunk_selector_update(bundle, selected_chunk_id),
-        selected_chunk_markdown(bundle, selected_chunk_id),
-        build_artifact_downloads(bundle),
-        empty_search_message(),
-        gr.update(choices=[], value=None),
-        empty_qa_message(),
-        "",
-        gr.update(choices=[], value=None),
-        None,
-        "",
-        None,
+        selected_chunk_id=selected_chunk_id,
+        organize_status=organize_status,
+        export_status=export_status,
+        export_file=export_file,
     )
 
 
-def refresh_library(selected_job_id: Optional[str] = None):
-    records = load_history_records(DEFAULT_OUTPUT_DIR)
-    choices = build_history_choices(records)
-    chosen_job_id = selected_job_id
-    if choices and not chosen_job_id:
-        chosen_job_id = choices[0][1]
-    if choices and chosen_job_id not in {choice[1] for choice in choices}:
-        chosen_job_id = choices[0][1]
-
-    detail_outputs = load_selected_video(chosen_job_id) if chosen_job_id else empty_detail_outputs()
+def refresh_library_workspace(
+    title_filter: str,
+    language_filter: str,
+    starred_filter: str,
+    sort_order: str,
+    selected_video_id: Optional[str] = None,
+):
+    all_records = load_video_library_records(DEFAULT_OUTPUT_DIR)
+    filtered_records = filter_video_library_records(
+        all_records,
+        title_query=title_filter,
+        language=language_filter,
+        starred=starred_filter,
+        sort_order=sort_order,
+    )
+    selector_update = build_library_selector_update(filtered_records, selected_video_id)
+    chosen_video_id = selector_update["value"]
+    detail_outputs = load_detail_view(chosen_video_id)
     return (
-        history_summary_markdown(records),
-        gr.update(choices=choices, value=chosen_job_id),
+        filtered_records,
+        render_library_overview_markdown(all_records, filtered_records),
+        build_language_filter_update(all_records, language_filter),
+        selector_update,
+        empty_library_search_message(),
+        gr.update(choices=[], value=None),
+        [],
         *detail_outputs,
+    )
+
+
+def reset_filters_and_refresh():
+    workspace_outputs = refresh_library_workspace("", DEFAULT_LANGUAGE_FILTER, DEFAULT_STAR_FILTER, DEFAULT_SORT_ORDER)
+    return (
+        "",
+        DEFAULT_STAR_FILTER,
+        DEFAULT_SORT_ORDER,
+        *workspace_outputs,
     )
 
 
@@ -334,17 +582,17 @@ def render_processing_status(result: dict) -> str:
     counts = manifest["counts"]
     return "\n".join(
         [
-            "## Processing complete",
+            "## 处理完成",
             "",
-            f"- Title: `{metadata['title']}`",
-            f"- Language detected: `{manifest['language_detected']}`",
-            f"- Duration: `{format_seconds(manifest['duration_seconds'])}`",
-            f"- Transcript segments: `{counts['segments']}`",
-            f"- Chunks: `{counts['chunks']}`",
+            f"- 标题：`{metadata['title']}`",
+            f"- 语言：`{manifest['language_detected']}`",
+            f"- 时长：`{format_seconds(manifest['duration_seconds'])}`",
+            f"- Segments：`{counts['segments']}`",
+            f"- Chunks：`{counts['chunks']}`",
             "",
-            "### Next step",
+            "### 下一步",
             "",
-            "- 现在可以切到「历史纪录 / 当前视频」工作区继续搜索、查看时间段、或直接提问。",
+            "- 现在可以切到「个人视频库」继续整理、跨视频搜索、或进入详情页提问。",
         ]
     )
 
@@ -384,47 +632,35 @@ def process_video_for_ui(
             echo_logs=False,
         )
     except VideoRagError as exc:
-        error_markdown = "\n".join(
-            [
-                "## Processing failed",
-                "",
-                str(exc),
-            ]
-        )
-        history_summary, history_radio, *detail_outputs = refresh_library(None)
+        reset_outputs = reset_filters_and_refresh()
         return (
-            error_markdown,
+            f"## 处理失败\n\n{exc}",
             "\n".join(logs),
             "",
             "",
             "",
             [],
-            history_summary,
-            history_radio,
-            *detail_outputs,
+            *reset_outputs,
         )
     except Exception as exc:
-        error_markdown = "\n".join(
-            [
-                "## Processing failed",
-                "",
-                f"Unexpected error: {exc}",
-            ]
-        )
-        history_summary, history_radio, *detail_outputs = refresh_library(None)
+        reset_outputs = reset_filters_and_refresh()
         return (
-            error_markdown,
+            f"## 处理失败\n\nUnexpected error: {exc}",
             "\n".join(logs),
             "",
             "",
             "",
             [],
-            history_summary,
-            history_radio,
-            *detail_outputs,
+            *reset_outputs,
         )
 
-    history_summary, history_radio, *detail_outputs = refresh_library(result["job_id"])
+    workspace_outputs = refresh_library_workspace(
+        "",
+        DEFAULT_LANGUAGE_FILTER,
+        DEFAULT_STAR_FILTER,
+        DEFAULT_SORT_ORDER,
+        result["job_id"],
+    )
     return (
         render_processing_status(result),
         "\n".join(logs),
@@ -433,43 +669,130 @@ def process_video_for_ui(
         result["preview_markdown"],
         build_artifact_downloads(
             {
-                "metadata": result["metadata"],
-                "manifest": result["manifest"],
+                "library_record": result["library_record"],
+                "paths": {
+                    "exports_dir": str((DEFAULT_OUTPUT_DIR / "exports" / result["job_id"]).resolve()),
+                },
             }
         ),
-        history_summary,
-        history_radio,
+        "",
+        DEFAULT_STAR_FILTER,
+        DEFAULT_SORT_ORDER,
+        *workspace_outputs,
+    )
+
+
+def on_library_selected(video_id: str):
+    return load_detail_view(video_id)
+
+
+def save_video_organization(
+    selected_video_id: str,
+    display_title: str,
+    tags_text: str,
+    notes_text: str,
+    starred: bool,
+    title_filter: str,
+    language_filter: str,
+    starred_filter: str,
+    sort_order: str,
+):
+    if not selected_video_id:
+        return refresh_library_workspace(title_filter, language_filter, starred_filter, sort_order)
+
+    update_library_record(
+        DEFAULT_OUTPUT_DIR,
+        selected_video_id,
+        display_title=display_title,
+        tags=tags_text,
+        notes=notes_text,
+        starred=starred,
+    )
+    filtered_records, library_overview, language_update, selector_update, library_search_status, library_search_results, library_search_state, *_ = refresh_library_workspace(
+        title_filter,
+        language_filter,
+        starred_filter,
+        sort_order,
+        selected_video_id,
+    )
+    detail_outputs = load_detail_view(selected_video_id, organize_status="已保存当前视频的整理信息。")
+    return (
+        filtered_records,
+        library_overview,
+        language_update,
+        selector_update,
+        library_search_status,
+        library_search_results,
+        library_search_state,
         *detail_outputs,
     )
 
 
-def on_history_selected(job_id: str):
-    history_summary, history_radio, *detail_outputs = refresh_library(job_id)
-    return history_summary, history_radio, *detail_outputs
+def search_library(filtered_records: list[dict], query: str):
+    if not filtered_records:
+        return "## 跨视频关键词搜索\n\n当前筛选范围里没有可搜索的视频。", gr.update(choices=[], value=None), []
+    if not query.strip():
+        return "## 跨视频关键词搜索\n\n请输入关键词。", gr.update(choices=[], value=None), []
+
+    results = search_video_library(query, filtered_records, limit=DEFAULT_LIBRARY_SEARCH_LIMIT)
+    if not results:
+        return (
+            f"## 跨视频关键词搜索\n\n当前筛选范围内没有命中 `{query}` 的视频内容。",
+            gr.update(choices=[], value=None),
+            [],
+        )
+
+    header = "\n".join(
+        [
+            "## 跨视频关键词搜索",
+            "",
+            f"- 查询词：`{query}`",
+            f"- 命中结果：`{len(results)}`",
+            "- 点击下面任一结果，会自动跳回对应视频详情页并定位到时间段。",
+        ]
+    )
+    return header, build_library_search_results_update(results), results
 
 
-def on_chunk_selected(bundle: dict, chunk_id: str):
-    if not bundle or not chunk_id:
-        return empty_chunk_browser_message()
-    return selected_chunk_markdown(bundle, chunk_id)
+def on_library_search_result_selected(results: list[dict], result_id: str):
+    if not results or not result_id:
+        return (
+            gr.update(),
+            *empty_detail_outputs(),
+        )
+
+    selected = next((item for item in results if item["result_id"] == result_id), None)
+    if not selected:
+        return (
+            gr.update(),
+            *empty_detail_outputs(),
+        )
+
+    detail_outputs = load_detail_view(selected["video_id"], selected_chunk_id=selected["chunk_id"])
+    return (
+        gr.update(value=selected["video_id"]),
+        *detail_outputs,
+    )
 
 
 def search_current_video(bundle: dict, query: str):
     if not bundle:
-        return "## 内容搜索\n\n先选一个视频。", gr.update(choices=[], value=None)
+        return "## 当前视频搜索\n\n先选一个视频。", gr.update(choices=[], value=None)
+    if not bundle.get("content_ready"):
+        return "## 当前视频搜索\n\n这个视频目前没有可用的 chunk artifact，所以不能搜索。", gr.update(choices=[], value=None)
     if not query.strip():
-        return "## 内容搜索\n\n请输入关键词。", gr.update(choices=[], value=None)
+        return "## 当前视频搜索\n\n请输入关键词。", gr.update(choices=[], value=None)
 
     results = search_chunk_artifact(query, bundle["chunks"], limit=DEFAULT_SEARCH_LIMIT)
     if not results:
         return (
-            f"## 内容搜索\n\n没有在当前视频中命中 `{query}`。",
+            f"## 当前视频搜索\n\n没有在当前视频中命中 `{query}`。",
             gr.update(choices=[], value=None),
         )
 
     header = "\n".join(
         [
-            "## 内容搜索",
+            "## 当前视频搜索",
             "",
             f"- 查询词：`{query}`",
             f"- 命中结果：`{len(results)}`",
@@ -485,9 +808,17 @@ def on_search_result_selected(bundle: dict, selected_chunk_id: str):
     return build_chunk_selector_update(bundle, selected_chunk_id), selected_chunk_markdown(bundle, selected_chunk_id)
 
 
+def on_chunk_selected(bundle: dict, selected_chunk_id: str):
+    if not bundle or not selected_chunk_id:
+        return empty_chunk_browser_message()
+    return selected_chunk_markdown(bundle, selected_chunk_id)
+
+
 def ask_question_for_video(bundle: dict, question: str, base_url: str, model: str, api_key: str):
     if not bundle:
-        return "## 问答区\n\n先选一个视频。", "", gr.update(choices=[], value=None), None
+        return "## grounded QA\n\n先选一个视频。", "", gr.update(choices=[], value=None), None
+    if not bundle.get("content_ready"):
+        return "## grounded QA\n\n这个视频目前没有可用的 chunk artifact，所以不能提问。", "", gr.update(choices=[], value=None), None
 
     try:
         qa_result = run_grounded_qa(
@@ -499,10 +830,10 @@ def ask_question_for_video(bundle: dict, question: str, base_url: str, model: st
             top_k=DEFAULT_QA_RETRIEVAL_LIMIT,
         )
     except VideoRagError as exc:
-        return f"## 问答区\n\n{exc}", "", gr.update(choices=[], value=None), None
+        return f"## grounded QA\n\n{exc}", "", gr.update(choices=[], value=None), None
 
     qa_status = [
-        "## 问答区",
+        "## grounded QA",
         "",
         f"- 问题：`{qa_result['question']}`",
         f"- 依据是否充足：`{'否' if qa_result['insufficient_evidence'] else '是'}`",
@@ -543,34 +874,63 @@ def on_citation_selected(bundle: dict, selected_chunk_id: str):
 
 def export_search(bundle: dict, query: str):
     if not bundle:
-        return "请先选一个视频。", None
+        return load_detail_view(None, export_status="请先选一个视频。")
+    if not bundle.get("content_ready"):
+        return load_detail_view(bundle["video_id"], export_status="当前视频没有可导出的搜索内容。")
     if not query.strip():
-        return "请先输入关键词，再导出搜索结果。", None
+        return load_detail_view(bundle["video_id"], export_status="请先输入关键词，再保存搜索结果。")
+
     results = search_chunk_artifact(query, bundle["chunks"], limit=DEFAULT_SEARCH_LIMIT)
     export_path = export_search_results(DEFAULT_OUTPUT_DIR, bundle, query, results)
-    return f"已导出搜索结果：`{export_path.name}`", str(export_path)
+    return load_detail_view(
+        bundle["video_id"],
+        export_status=f"已保存搜索结果：`{export_path.name}`",
+        export_file=str(export_path),
+    )
 
 
 def export_qa(bundle: dict, qa_result: dict):
     if not bundle:
-        return "请先选一个视频。", None
+        return load_detail_view(None, export_status="请先选一个视频。")
     if not qa_result:
-        return "请先完成一次问答。", None
+        return load_detail_view(bundle["video_id"], export_status="请先完成一次问答，再保存结果。")
+
     export_path = export_qa_result(DEFAULT_OUTPUT_DIR, bundle, qa_result)
-    return f"已导出问答结果：`{export_path.name}`", str(export_path)
+    return load_detail_view(
+        bundle["video_id"],
+        export_status=f"已保存问答结果：`{export_path.name}`",
+        export_file=str(export_path),
+    )
 
 
 def export_summary(bundle: dict):
     if not bundle:
-        return "请先选一个视频。", None
+        return load_detail_view(None, export_status="请先选一个视频。")
+
     export_path = export_video_summary(DEFAULT_OUTPUT_DIR, bundle)
-    return f"已导出单视频摘要：`{export_path.name}`", str(export_path)
+    return load_detail_view(
+        bundle["video_id"],
+        export_status=f"已保存单视频摘要：`{export_path.name}`",
+        export_file=str(export_path),
+    )
 
 
-initial_history_summary, initial_history_radio, *initial_detail_outputs = refresh_library(None)
+(
+    initial_filtered_records,
+    initial_library_overview,
+    initial_language_filter,
+    initial_library_selector,
+    initial_library_search_status,
+    initial_library_search_results,
+    initial_library_search_state,
+    *initial_detail_outputs,
+) = refresh_library_workspace("", DEFAULT_LANGUAGE_FILTER, DEFAULT_STAR_FILTER, DEFAULT_SORT_ORDER)
+
 
 with gr.Blocks(title="video-rag", theme=gr.themes.Soft()) as demo:
-    selected_job_state = gr.State(initial_detail_outputs[0])
+    filtered_records_state = gr.State(initial_filtered_records)
+    library_search_results_state = gr.State(initial_library_search_state)
+    selected_video_state = gr.State(initial_detail_outputs[0])
     current_bundle_state = gr.State(initial_detail_outputs[1])
     qa_result_state = gr.State(None)
 
@@ -578,13 +938,168 @@ with gr.Blocks(title="video-rag", theme=gr.themes.Soft()) as demo:
         """
         # video-rag
 
-        把本地视频处理成可读文本之后，现在你还可以直接在同一个本地界面里浏览历史纪录、进入单视频详情、搜索内容、提问并查看对应时间段。
+        `video-rag` 现在已经从“本地单视频处理工具”推进到 **本地个人视频资料库 MVP**。
 
-        这一轮的范围仍然只围绕**当前单视频**。它还不是完整 Video RAG 平台，但已经能跑通“处理 -> 查看 -> 搜索 -> grounded QA -> 匯出”的最小闭环。
+        你可以在本地持续处理多个视频，把它们沉淀成可找回、可整理、可再次进入的个人资料库：
+
+        - 处理多个本地视频
+        - 在视频库中按标题、语言、收藏状态筛选
+        - 跨视频做基础关键词搜索
+        - 进入某个视频详情页继续搜索、grounded QA、保存结果
+        - 对视频做最基本的整理：收藏、改显示标题、加标签、写备注
+
+        它仍然**不是**完整 Video RAG 平台。本轮重点是把“资料库层”做稳，为后续 multi-video knowledge loop 打基础。
         """
     )
 
     with gr.Tabs():
+        with gr.Tab("个人视频库"):
+            with gr.Row():
+                title_filter = gr.Textbox(label="标题关键词", placeholder="按显示标题 / 原始标题 / 标签筛选")
+                language_filter = gr.Dropdown(
+                    label="语言",
+                    choices=initial_language_filter["choices"],
+                    value=initial_language_filter["value"],
+                )
+                starred_filter = gr.Dropdown(
+                    label="收藏状态",
+                    choices=[
+                        ("全部", DEFAULT_STAR_FILTER),
+                        ("只看收藏", "starred"),
+                        ("只看未收藏", "unstarred"),
+                    ],
+                    value=DEFAULT_STAR_FILTER,
+                )
+                sort_order = gr.Dropdown(
+                    label="排序",
+                    choices=[
+                        ("最近处理（新到旧）", "recent_desc"),
+                        ("最近处理（旧到新）", "recent_asc"),
+                        ("显示标题 A-Z", "title_asc"),
+                    ],
+                    value=DEFAULT_SORT_ORDER,
+                )
+                apply_filters_button = gr.Button("应用筛选", variant="primary")
+                clear_filters_button = gr.Button("清空筛选")
+
+            library_overview = gr.Markdown(initial_library_overview)
+            library_selector = gr.Radio(
+                label="选择视频",
+                choices=initial_library_selector["choices"],
+                value=initial_library_selector["value"],
+            )
+
+            with gr.Row():
+                with gr.Column(scale=1):
+                    library_search_query = gr.Textbox(
+                        label="跨视频关键词搜索",
+                        placeholder="在当前筛选范围内搜索所有视频的 chunk 内容",
+                    )
+                    library_search_button = gr.Button("搜索视频库")
+                    library_search_status = gr.Markdown(initial_library_search_status)
+                    library_search_results = gr.Radio(
+                        label="跨视频搜索结果",
+                        choices=initial_library_search_results["choices"],
+                        value=initial_library_search_results["value"],
+                    )
+                with gr.Column(scale=1):
+                    summary_card = gr.Markdown(initial_detail_outputs[2])
+                    key_info = gr.Markdown(initial_detail_outputs[3])
+
+            with gr.Row():
+                with gr.Column(scale=1):
+                    display_title_input = gr.Textbox(label="显示标题", value=initial_detail_outputs[6])
+                    tags_input = gr.Textbox(label="标签（逗号分隔）", value=initial_detail_outputs[7])
+                    starred_checkbox = gr.Checkbox(label="收藏这条视频资料", value=initial_detail_outputs[9])
+                    save_organization_button = gr.Button("保存整理信息")
+                    organize_status = gr.Markdown(initial_detail_outputs[10] or "")
+                with gr.Column(scale=1):
+                    notes_input = gr.Textbox(
+                        label="我的备注",
+                        value=initial_detail_outputs[8],
+                        lines=8,
+                        max_lines=12,
+                        show_copy_button=True,
+                    )
+
+            with gr.Row():
+                with gr.Column(scale=1):
+                    artifact_paths = gr.Markdown(initial_detail_outputs[4])
+                    artifact_downloads = gr.File(
+                        label="当前视频本地文件",
+                        file_count="multiple",
+                        value=initial_detail_outputs[5],
+                    )
+                with gr.Column(scale=1):
+                    saved_exports = gr.Markdown(initial_detail_outputs[11])
+                    saved_export_downloads = gr.File(
+                        label="历史保存结果",
+                        file_count="multiple",
+                        value=initial_detail_outputs[12],
+                    )
+
+            with gr.Row():
+                with gr.Column(scale=1):
+                    search_query = gr.Textbox(
+                        label="当前视频关键词搜索",
+                        placeholder="输入关键词，例如人物、主题、句子片段……",
+                    )
+                    search_button = gr.Button("搜索当前视频")
+                    search_status = gr.Markdown(initial_detail_outputs[13])
+                    search_results = gr.Radio(
+                        label="当前视频命中结果",
+                        choices=initial_detail_outputs[14]["choices"],
+                        value=initial_detail_outputs[14]["value"],
+                    )
+                    export_search_button = gr.Button("保存搜索结果")
+                with gr.Column(scale=1):
+                    with gr.Accordion("QA 设置（OpenAI 兼容接口）", open=False):
+                        qa_base_url = gr.Textbox(
+                            label="QA Base URL",
+                            value=DEFAULT_QA_BASE_URL,
+                            placeholder="例如 https://your-endpoint/v1",
+                        )
+                        qa_model = gr.Textbox(
+                            label="QA Model",
+                            value=DEFAULT_QA_MODEL,
+                            placeholder="例如 gpt-4o-mini",
+                        )
+                        qa_api_key = gr.Textbox(
+                            label="QA API Key",
+                            value=DEFAULT_QA_API_KEY,
+                            type="password",
+                            placeholder="当前会话内保存，不写入磁盘",
+                        )
+                    question_input = gr.Textbox(
+                        label="基于当前视频提问",
+                        placeholder="例如：这段视频主要讲了什么？提到了哪些关键观点？",
+                    )
+                    ask_button = gr.Button("提问当前视频", variant="primary")
+                    qa_status = gr.Markdown(initial_detail_outputs[15])
+                    qa_answer = gr.Markdown(initial_detail_outputs[16] or "")
+                    citation_results = gr.Radio(
+                        label="引用",
+                        choices=initial_detail_outputs[17]["choices"],
+                        value=initial_detail_outputs[17]["value"],
+                    )
+                    export_qa_button = gr.Button("保存问答结果")
+
+            with gr.Row():
+                with gr.Column(scale=1):
+                    chunk_selector = gr.Radio(
+                        label="Chunk / 时间段浏览",
+                        choices=initial_detail_outputs[18]["choices"],
+                        value=initial_detail_outputs[18]["value"],
+                    )
+                with gr.Column(scale=1):
+                    current_chunk_markdown = gr.Markdown(initial_detail_outputs[19])
+
+            with gr.Row():
+                with gr.Column(scale=1):
+                    export_summary_button = gr.Button("保存单视频摘要")
+                    export_status = gr.Markdown(initial_detail_outputs[20] or "")
+                    export_file = gr.File(label="最新保存结果", value=initial_detail_outputs[21])
+
         with gr.Tab("处理新视频"):
             with gr.Row():
                 with gr.Column(scale=1):
@@ -621,13 +1136,11 @@ with gr.Blocks(title="video-rag", theme=gr.themes.Soft()) as demo:
                             step=1,
                             label="Chunk 重叠 segment 数",
                         )
-
                     run_button = gr.Button("开始处理", variant="primary")
                     clear_button = gr.Button("清空结果")
-
                 with gr.Column(scale=1):
                     process_status = gr.Markdown(
-                        "## 等待开始\n\n处理完成后，这里会提示你下一步去视频库继续搜索或提问。"
+                        "## 等待开始\n\n处理完成后，这里会提示你回到“个人视频库”继续整理、搜索和提问。"
                     )
                     log_output = gr.Textbox(
                         label="处理日志",
@@ -654,195 +1167,194 @@ with gr.Blocks(title="video-rag", theme=gr.themes.Soft()) as demo:
             with gr.Tab("文件下载"):
                 processing_downloads = gr.File(label="当前处理产物", file_count="multiple")
 
-        with gr.Tab("历史纪录 / 当前视频"):
-            with gr.Row():
-                with gr.Column(scale=1):
-                    history_summary = gr.Markdown(initial_history_summary)
-                    refresh_history_button = gr.Button("刷新历史纪录")
-                    history_selector = gr.Radio(
-                        label="历史纪录 / 视频库",
-                        choices=initial_history_radio["choices"],
-                        value=initial_history_radio["value"],
-                    )
-                with gr.Column(scale=1):
-                    detail_overview = gr.Markdown(initial_detail_outputs[2])
-                    artifact_downloads = gr.File(
-                        label="当前视频文件下载",
-                        file_count="multiple",
-                        value=initial_detail_outputs[5],
-                    )
+    apply_filters_button.click(
+        fn=refresh_library_workspace,
+        inputs=[title_filter, language_filter, starred_filter, sort_order, selected_video_state],
+        outputs=[
+            filtered_records_state,
+            library_overview,
+            language_filter,
+            library_selector,
+            library_search_status,
+            library_search_results,
+            library_search_results_state,
+            selected_video_state,
+            current_bundle_state,
+            summary_card,
+            key_info,
+            artifact_paths,
+            artifact_downloads,
+            display_title_input,
+            tags_input,
+            notes_input,
+            starred_checkbox,
+            organize_status,
+            saved_exports,
+            saved_export_downloads,
+            search_status,
+            search_results,
+            qa_status,
+            qa_answer,
+            citation_results,
+            chunk_selector,
+            current_chunk_markdown,
+            export_status,
+            export_file,
+        ],
+        show_api=False,
+    )
 
-            with gr.Row():
-                with gr.Column(scale=1):
-                    search_query = gr.Textbox(
-                        label="当前视频关键词搜索",
-                        placeholder="输入关键词，例如人物、主题、句子片段……",
-                    )
-                    search_button = gr.Button("搜索当前视频")
-                    search_status = gr.Markdown(initial_detail_outputs[6])
-                    search_results = gr.Radio(
-                        label="命中结果",
-                        choices=initial_detail_outputs[7]["choices"],
-                        value=initial_detail_outputs[7]["value"],
-                    )
-                    export_search_button = gr.Button("匯出搜索结果")
-                with gr.Column(scale=1):
-                    with gr.Accordion("QA 设置（OpenAI 兼容接口）", open=False):
-                        qa_base_url = gr.Textbox(
-                            label="QA Base URL",
-                            value=DEFAULT_QA_BASE_URL,
-                            placeholder="例如 https://your-endpoint/v1",
-                        )
-                        qa_model = gr.Textbox(
-                            label="QA Model",
-                            value=DEFAULT_QA_MODEL,
-                            placeholder="例如 gpt-4o-mini",
-                        )
-                        qa_api_key = gr.Textbox(
-                            label="QA API Key",
-                            value=DEFAULT_QA_API_KEY,
-                            type="password",
-                            placeholder="当前会话内保存，不写入磁盘",
-                        )
-                    question_input = gr.Textbox(
-                        label="基于当前视频提问",
-                        placeholder="例如：这段视频主要讲了什么？提到了哪些关键观点？",
-                    )
-                    ask_button = gr.Button("提问当前视频", variant="primary")
-                    qa_status = gr.Markdown(initial_detail_outputs[8])
-                    qa_answer = gr.Markdown(initial_detail_outputs[9] or "")
-                    citation_results = gr.Radio(
-                        label="引用",
-                        choices=initial_detail_outputs[10]["choices"],
-                        value=initial_detail_outputs[10]["value"],
-                    )
-                    export_qa_button = gr.Button("匯出问答结果")
+    clear_filters_button.click(
+        fn=reset_filters_and_refresh,
+        outputs=[
+            title_filter,
+            starred_filter,
+            sort_order,
+            filtered_records_state,
+            library_overview,
+            language_filter,
+            library_selector,
+            library_search_status,
+            library_search_results,
+            library_search_results_state,
+            selected_video_state,
+            current_bundle_state,
+            summary_card,
+            key_info,
+            artifact_paths,
+            artifact_downloads,
+            display_title_input,
+            tags_input,
+            notes_input,
+            starred_checkbox,
+            organize_status,
+            saved_exports,
+            saved_export_downloads,
+            search_status,
+            search_results,
+            qa_status,
+            qa_answer,
+            citation_results,
+            chunk_selector,
+            current_chunk_markdown,
+            export_status,
+            export_file,
+        ],
+        show_api=False,
+    )
 
-            with gr.Row():
-                with gr.Column(scale=1):
-                    chunk_selector = gr.Radio(
-                        label="Chunk / 时间段浏览",
-                        choices=initial_detail_outputs[3]["choices"],
-                        value=initial_detail_outputs[3]["value"],
-                    )
-                with gr.Column(scale=1):
-                    current_chunk_markdown = gr.Markdown(initial_detail_outputs[4])
+    library_selector.select(
+        fn=on_library_selected,
+        inputs=[library_selector],
+        outputs=[
+            selected_video_state,
+            current_bundle_state,
+            summary_card,
+            key_info,
+            artifact_paths,
+            artifact_downloads,
+            display_title_input,
+            tags_input,
+            notes_input,
+            starred_checkbox,
+            organize_status,
+            saved_exports,
+            saved_export_downloads,
+            search_status,
+            search_results,
+            qa_status,
+            qa_answer,
+            citation_results,
+            chunk_selector,
+            current_chunk_markdown,
+            export_status,
+            export_file,
+        ],
+        show_api=False,
+    )
 
-            with gr.Row():
-                with gr.Column(scale=1):
-                    export_summary_button = gr.Button("匯出单视频摘要")
-                    export_status = gr.Markdown(initial_detail_outputs[12] or "")
-                    export_file = gr.File(label="最新匯出文件", value=initial_detail_outputs[13])
-
-    run_button.click(
-        fn=process_video_for_ui,
+    save_organization_button.click(
+        fn=save_video_organization,
         inputs=[
-            video_file,
-            model_size,
-            language,
-            chunk_max_chars,
-            chunk_overlap_segments,
+            selected_video_state,
+            display_title_input,
+            tags_input,
+            notes_input,
+            starred_checkbox,
+            title_filter,
+            language_filter,
+            starred_filter,
+            sort_order,
         ],
         outputs=[
-            process_status,
-            log_output,
-            transcript_text,
-            process_chunk_preview,
-            preview_markdown,
-            processing_downloads,
-            history_summary,
-            history_selector,
-            selected_job_state,
+            filtered_records_state,
+            library_overview,
+            language_filter,
+            library_selector,
+            library_search_status,
+            library_search_results,
+            library_search_results_state,
+            selected_video_state,
             current_bundle_state,
-            detail_overview,
-            chunk_selector,
-            current_chunk_markdown,
+            summary_card,
+            key_info,
+            artifact_paths,
             artifact_downloads,
+            display_title_input,
+            tags_input,
+            notes_input,
+            starred_checkbox,
+            organize_status,
+            saved_exports,
+            saved_export_downloads,
             search_status,
             search_results,
             qa_status,
             qa_answer,
             citation_results,
-            qa_result_state,
-            export_status,
-            export_file,
-        ],
-        show_progress="full",
-        show_api=False,
-    )
-
-    clear_button.click(
-        fn=lambda: (
-            "## 等待开始\n\n处理完成后，这里会提示你下一步去视频库继续搜索或提问。",
-            "",
-            "",
-            "",
-            "",
-            [],
-        ),
-        outputs=[
-            process_status,
-            log_output,
-            transcript_text,
-            process_chunk_preview,
-            preview_markdown,
-            processing_downloads,
-        ],
-        show_api=False,
-    )
-
-    refresh_history_button.click(
-        fn=refresh_library,
-        inputs=[selected_job_state],
-        outputs=[
-            history_summary,
-            history_selector,
-            selected_job_state,
-            current_bundle_state,
-            detail_overview,
             chunk_selector,
             current_chunk_markdown,
-            artifact_downloads,
-            search_status,
-            search_results,
-            qa_status,
-            qa_answer,
-            citation_results,
-            qa_result_state,
             export_status,
             export_file,
         ],
         show_api=False,
     )
 
-    history_selector.select(
-        fn=on_history_selected,
-        inputs=[history_selector],
+    library_search_button.click(
+        fn=search_library,
+        inputs=[filtered_records_state, library_search_query],
+        outputs=[library_search_status, library_search_results, library_search_results_state],
+        show_api=False,
+    )
+
+    library_search_results.select(
+        fn=on_library_search_result_selected,
+        inputs=[library_search_results_state, library_search_results],
         outputs=[
-            history_summary,
-            history_selector,
-            selected_job_state,
+            library_selector,
+            selected_video_state,
             current_bundle_state,
-            detail_overview,
-            chunk_selector,
-            current_chunk_markdown,
+            summary_card,
+            key_info,
+            artifact_paths,
             artifact_downloads,
+            display_title_input,
+            tags_input,
+            notes_input,
+            starred_checkbox,
+            organize_status,
+            saved_exports,
+            saved_export_downloads,
             search_status,
             search_results,
             qa_status,
             qa_answer,
             citation_results,
-            qa_result_state,
+            chunk_selector,
+            current_chunk_markdown,
             export_status,
             export_file,
         ],
-        show_api=False,
-    )
-
-    chunk_selector.select(
-        fn=on_chunk_selected,
-        inputs=[current_bundle_state, chunk_selector],
-        outputs=[current_chunk_markdown],
         show_api=False,
     )
 
@@ -874,24 +1386,173 @@ with gr.Blocks(title="video-rag", theme=gr.themes.Soft()) as demo:
         show_api=False,
     )
 
+    chunk_selector.select(
+        fn=on_chunk_selected,
+        inputs=[current_bundle_state, chunk_selector],
+        outputs=[current_chunk_markdown],
+        show_api=False,
+    )
+
     export_search_button.click(
         fn=export_search,
         inputs=[current_bundle_state, search_query],
-        outputs=[export_status, export_file],
+        outputs=[
+            selected_video_state,
+            current_bundle_state,
+            summary_card,
+            key_info,
+            artifact_paths,
+            artifact_downloads,
+            display_title_input,
+            tags_input,
+            notes_input,
+            starred_checkbox,
+            organize_status,
+            saved_exports,
+            saved_export_downloads,
+            search_status,
+            search_results,
+            qa_status,
+            qa_answer,
+            citation_results,
+            chunk_selector,
+            current_chunk_markdown,
+            export_status,
+            export_file,
+        ],
         show_api=False,
     )
 
     export_qa_button.click(
         fn=export_qa,
         inputs=[current_bundle_state, qa_result_state],
-        outputs=[export_status, export_file],
+        outputs=[
+            selected_video_state,
+            current_bundle_state,
+            summary_card,
+            key_info,
+            artifact_paths,
+            artifact_downloads,
+            display_title_input,
+            tags_input,
+            notes_input,
+            starred_checkbox,
+            organize_status,
+            saved_exports,
+            saved_export_downloads,
+            search_status,
+            search_results,
+            qa_status,
+            qa_answer,
+            citation_results,
+            chunk_selector,
+            current_chunk_markdown,
+            export_status,
+            export_file,
+        ],
         show_api=False,
     )
 
     export_summary_button.click(
         fn=export_summary,
         inputs=[current_bundle_state],
-        outputs=[export_status, export_file],
+        outputs=[
+            selected_video_state,
+            current_bundle_state,
+            summary_card,
+            key_info,
+            artifact_paths,
+            artifact_downloads,
+            display_title_input,
+            tags_input,
+            notes_input,
+            starred_checkbox,
+            organize_status,
+            saved_exports,
+            saved_export_downloads,
+            search_status,
+            search_results,
+            qa_status,
+            qa_answer,
+            citation_results,
+            chunk_selector,
+            current_chunk_markdown,
+            export_status,
+            export_file,
+        ],
+        show_api=False,
+    )
+
+    run_button.click(
+        fn=process_video_for_ui,
+        inputs=[
+            video_file,
+            model_size,
+            language,
+            chunk_max_chars,
+            chunk_overlap_segments,
+        ],
+        outputs=[
+            process_status,
+            log_output,
+            transcript_text,
+            process_chunk_preview,
+            preview_markdown,
+            processing_downloads,
+            title_filter,
+            starred_filter,
+            sort_order,
+            filtered_records_state,
+            library_overview,
+            language_filter,
+            library_selector,
+            library_search_status,
+            library_search_results,
+            library_search_results_state,
+            selected_video_state,
+            current_bundle_state,
+            summary_card,
+            key_info,
+            artifact_paths,
+            artifact_downloads,
+            display_title_input,
+            tags_input,
+            notes_input,
+            starred_checkbox,
+            organize_status,
+            saved_exports,
+            saved_export_downloads,
+            search_status,
+            search_results,
+            qa_status,
+            qa_answer,
+            citation_results,
+            chunk_selector,
+            current_chunk_markdown,
+            export_status,
+            export_file,
+        ],
+        show_progress="full",
+        show_api=False,
+    )
+
+    clear_button.click(
+        fn=lambda: (
+            "## 等待开始\n\n处理完成后，这里会提示你回到“个人视频库”继续整理、搜索和提问。",
+            "",
+            "",
+            "",
+            "",
+            [],
+        ),
+        outputs=[
+            process_status,
+            log_output,
+            transcript_text,
+            process_chunk_preview,
+            preview_markdown,
+            processing_downloads,
+        ],
         show_api=False,
     )
 

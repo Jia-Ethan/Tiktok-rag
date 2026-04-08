@@ -15,6 +15,7 @@ venv/
 data/audio/
 data/chunks/
 data/exports/
+data/library/
 data/manifests/
 data/transcripts/
 data/meta/

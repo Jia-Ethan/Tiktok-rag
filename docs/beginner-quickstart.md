@@ -77,8 +77,8 @@ VIDEO_RAG_HOST=0.0.0.0 VIDEO_RAG_PORT=7860 python3 app/gradio_app.py
 
 然后再做这两步：
 
-1. 打开 UI 里的「历史纪录 / 当前视频」
-2. 进入刚处理完的视频详情页，继续做关键词搜索或提问
+1. 打开 UI 里的「个人视频库」
+2. 进入刚处理完的视频详情页，继续做筛选、搜索、提问或整理
 
 ## txt / md / json 各自适合什么场景
 
@@ -108,6 +108,7 @@ VIDEO_RAG_HOST=0.0.0.0 VIDEO_RAG_PORT=7860 python3 app/gradio_app.py
 - `chunks/*.chunks.json`
 - `meta/*.meta.json`
 - `manifests/*.manifest.json`
+- `library/*.video.json`
 
 如果你只是普通用户，优先打开：
 
@@ -116,5 +117,5 @@ VIDEO_RAG_HOST=0.0.0.0 VIDEO_RAG_PORT=7860 python3 app/gradio_app.py
 
 如果你已经想继续用这份结果，而不是只导出文字：
 
-3. 去 UI 的「历史纪录 / 当前视频」里做搜索
-4. 在同一页里直接提问，并查看引用的时间段
+3. 去 UI 的「个人视频库」里找回这个视频
+4. 在详情页里继续做当前视频搜索、提问、保存结果

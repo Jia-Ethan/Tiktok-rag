@@ -1,53 +1,59 @@
 # video-rag
 
-**Turn one local video into readable text, searchable chunks, grounded answers, and reusable artifacts on your own machine.**
+**Build a local personal video library that you can process, organize, search, revisit, and reuse on your own machine.**
 
-`video-rag` 现在已经不只是“本地视频转文字工具”。
+`video-rag` 现在已经不只是“本地单视频转文字工具”。
 
-当前版本可以在同一个本地 UI 里完成这一条最小闭环：
+当前版本的产品定位是：
 
-- 选择一个本地视频并处理
-- 查看历史纪录
-- 进入单视频详情页
-- 搜索当前视频内容
-- 基于当前视频内容提问并得到带时间段引用的答案
-- 匯出搜索结果、问答结果或单视频摘要
+- 本地个人视频资料库 MVP
+- 先把视频资产沉淀下来、整理起来、能再次进入
+- 再为后续 multi-video knowledge loop 打基础
 
-它仍然**不是**完整 Video RAG 平台。当前范围只围绕**本地单视频**，不包含 URL、线上部署、多用户、多视频知识库或向量检索。
+你现在可以在同一个本地 UI 里完成这条闭环：
+
+- 处理多个本地视频
+- 在“个人视频库”里找回它们
+- 按标题、语言、收藏状态筛选
+- 对当前筛选范围做跨视频关键词搜索
+- 进入某个视频详情页继续做当前视频搜索和 grounded QA
+- 收藏、改显示标题、加标签、写备注
+- 把搜索结果、问答结果、单视频摘要保存到本地，并在详情页再次打开
+
+它仍然**不是**完整 Video RAG 平台。当前不支持 URL、线上部署、多用户、向量数据库、跨视频 grounded QA 或 semantic retrieval。
 
 ![video-rag UI](docs/assets/ui-demo.png)
 
 ## 它现在能帮你做什么
 
-你把一个已经下载到本地的视频交给 `video-rag` 后，会得到两层结果：
+如果你已经处理过很多本地视频，`video-rag` 现在可以帮你把这些视频变成一个可持续使用的个人资料库：
 
-- 普通用户可直接消费的结果：
-  - 可读 transcript
-  - `preview.md`
-  - 当前视频搜索
-  - grounded QA
-  - 可直接打开的匯出文件
-- 开发者可继续接入的结构层：
-  - `transcripts.json`
-  - `chunks.json`
-  - `meta.json`
-  - `manifest.json`
+- 不需要再记 `job_id`
+- 不需要先翻 JSON 才能找到内容
+- 不需要每次都从头处理、从头定位
 
-如果你第一次试用，不需要先打开 JSON。先看 `preview.md`、`text.txt`，再去“历史纪录 / 当前视频”里做搜索和提问。
+你可以先在视频库页找到目标视频，再进入详情页继续：
+
+- 看摘要预览
+- 看本地文件入口
+- 搜索当前视频内容
+- 对当前视频提问
+- 查看引用时间段
+- 保存结果并留在这条视频资料上
 
 ## 适合谁
 
-- 想把单个本地视频转成可读结果，再继续搜索或提问的人
-- 想做课程、访谈、分享、短视频内容整理的人
-- 想先在本地跑通“处理 -> 搜索 -> grounded QA”闭环的人
-- 本地优先，不想一开始就搭建数据库、向量库或线上服务的个人用户与独立开发者
+- 本地优先、单人长期使用的人
+- 想把处理过的课程、访谈、分享、素材沉淀成个人资料库的人
+- 想先把“资料管理层”做稳，再考虑更复杂知识库的人
+- 不想一开始就搭数据库、向量库、线上服务的个人用户与独立开发者
 
 ## 不适合谁
 
-- 想直接贴 URL 完成全流程的人
-- 期待它现在已经是多视频知识库或完整 Video RAG 平台的人
-- 需要线上部署、多人协作、多视频统一检索的人
-- 需要 semantic chunking 重做或大规模 benchmark 的人
+- 想直接贴 URL 跑全流程的人
+- 需要线上同步、多用户协作的人
+- 期待当前版本已经是完整多视频知识库或完整 Video RAG 平台的人
+- 想先做 semantic retrieval、vector DB、大规模 benchmark 的人
 
 ## 第一次使用路径
 
@@ -55,41 +61,45 @@
 2. 安装 `ffmpeg`
 3. 创建虚拟环境并安装依赖
 4. 运行本地 UI：`python3 app/gradio_app.py`
-5. 在浏览器里处理一个视频
-6. 处理完成后，切到“历史纪录 / 当前视频”
-7. 进入该视频详情页，继续搜索或提问
+5. 处理一个或多个本地视频
+6. 回到“个人视频库”页筛选、搜索、整理
+7. 进入某个视频详情页继续做当前视频搜索和 grounded QA
 
-更细的普通用户说明见：
+普通用户说明见：
 
 - [docs/beginner-quickstart.md](docs/beginner-quickstart.md)
 
-## 处理完一个视频后，你会得到什么
+## 处理完后会得到什么
 
-### 最适合普通用户先打开的文件
+### 最适合普通用户先看的
 
 - `data/preview/<job_id>.md`
-  这是第一次最适合打开看的文件。它会告诉你这次处理的标题、语言、时长、chunk 预览，以及每个输出文件该怎么用。
+  第一次整体查看这次处理结果。
 - `data/text/<job_id>.txt`
-  这是最适合直接阅读、复制、发到笔记软件或发给别人的纯文本版本。
+  最适合直接阅读、复制、贴到笔记软件。
+- `data/library/<video_id>.video.json`
+  这是产品层的资料记录，会保存显示标题、标签、收藏、备注、保存结果历史等信息。
 
-### 最适合在 UI 里继续做的事
+### 最适合在 UI 里继续做的
 
-- 在“历史纪录 / 当前视频”中打开当前视频详情页
-- 搜索关键词并定位到 chunk 与时间段
-- 基于当前视频内容提问
-- 查看引用对应的时间段和 chunk 内容
-- 匯出搜索结果、问答结果或单视频摘要
+- 在个人视频库中筛选和找回视频
+- 跨视频做基础关键词搜索
+- 在详情页继续搜索当前视频
+- 在详情页做 grounded QA
+- 保存搜索结果、问答结果、单视频摘要
 
-### 其他结构化输出文件
+### 结构化输出文件
 
 - `data/transcripts/<job_id>.json`
-  原始时间戳 transcript，适合开发者或后续脚本处理。
+  原始时间戳 transcript。
 - `data/chunks/<job_id>.chunks.json`
-  当前视频搜索与 grounded QA 使用的 chunk-ready artifact，也是后续检索层的基础。
+  当前视频搜索、grounded QA 和后续检索层的基础 artifact。
 - `data/meta/<job_id>.meta.json`
-  处理元数据，负责把输入视频和输出文件关系串起来。
+  一次处理运行的元数据。
 - `data/manifests/<job_id>.manifest.json`
-  一次运行的摘要文件，也是首页“历史纪录 / 视频库”的主资料源。
+  一次处理运行的机器摘要。
+- `data/library/<video_id>.video.json`
+  面向长期使用的产品层视频记录。
 
 ## 快速开始
 
@@ -124,19 +134,13 @@ python -m pip install -r requirements.txt
 python3 app/gradio_app.py
 ```
 
-默认本地地址通常是：
+默认地址通常是：
 
 ```text
 http://127.0.0.1:7860
 ```
 
-如果你的环境里 `127.0.0.1` 访问有问题，可以这样启动：
-
-```bash
-VIDEO_RAG_HOST=0.0.0.0 VIDEO_RAG_PORT=7860 python3 app/gradio_app.py
-```
-
-### 4. 如果你更习惯命令行
+如果你更习惯命令行，也可以继续用：
 
 ```bash
 python3 scripts/pipeline.py \
@@ -145,13 +149,30 @@ python3 scripts/pipeline.py \
   --language auto
 ```
 
+## 产品边界
+
+它现在是：
+
+- 本地个人视频资料库 MVP
+- 本地单视频搜索与 grounded QA 闭环
+- 本地保存整理信息和保存结果历史的资料层
+
+它还不是：
+
+- 完整 Video RAG 平台
+- 多视频 semantic retrieval 系统
+- 向量数据库方案
+- 跨视频 grounded QA
+- URL 下载器
+- 线上部署产品
+
 ## 本地搜索与问答怎么工作
 
-- 搜索只针对**当前选中的一个视频**
-- 搜索范围只限当前视频的 `chunks.json`
-- 问答也只基于当前视频的 chunks，不做开放聊天
+- “跨视频搜索”只做基础关键词搜索，不做 embedding
+- “当前视频搜索”只搜当前视频的 `chunks.json`
+- grounded QA 只基于当前选中视频的 chunks 回答
 - 答案必须带引用；引用至少对应 chunk 编号和时间段
-- 如果当前视频里没有足够依据，系统会明确说依据不足，不会硬答
+- 如果当前视频没有足够依据，系统会明确拒答，不会硬答
 
 ### QA 配置
 
@@ -163,31 +184,12 @@ python3 scripts/pipeline.py \
 
 API key 只保存在当前 UI 会话里，不写入磁盘。
 
-## 它现在是什么，不是什么
-
-它现在是：
-
-- 本地单视频处理工具
-- 本地单视频搜索与 grounded QA 闭环
-- 可继续输出结构化 artifact 的基础层
-
-它还不是：
-
-- 完整 Video RAG 平台
-- 多视频统一知识库
-- URL 下载器
-- 向量库 / 线上检索 / Web 部署方案
-
-下一步最合理的发展方向仍然是：
-
-- 在现有单视频 grounded QA 验证成立后，再考虑最小 multi-video retrieval-ready loop
-
 ## 已知限制
 
 - 只支持本地视频文件，不支持 URL
-- 搜索仍然是关键词匹配，不是 embedding / semantic retrieval
-- grounded QA 只针对当前单视频，不支持跨视频问答
-- 当前 chunking 仍然是结构型、保守型策略，不是 semantic chunking
+- 跨视频搜索仍然是关键词匹配，不是 semantic retrieval
+- grounded QA 仍然只针对当前单视频，不支持跨视频问答
+- 资料记录默认按“一次处理一条资料”建模，不做同源视频合并
 - 长视频、多语言、强噪音、多说话人场景还没有系统 benchmark
 
 ## 文档
@@ -196,11 +198,16 @@ API key 只保存在当前 UI 会话里，不写入磁盘。
 
 - [docs/beginner-quickstart.md](docs/beginner-quickstart.md)
 
+### 产品 / 架构文档
+
+- [docs/video-library-mvp.md](docs/video-library-mvp.md)
+- [docs/video-library-mvp-smoke-test.md](docs/video-library-mvp-smoke-test.md)
+- [docs/local-search-qa-architecture.md](docs/local-search-qa-architecture.md)
+
 ### Developer docs
 
 - [docs/public-sample-output.md](docs/public-sample-output.md)
 - [docs/chunk-artifact-spec.md](docs/chunk-artifact-spec.md)
-- [docs/local-search-qa-architecture.md](docs/local-search-qa-architecture.md)
 - [docs/feedback-guide.md](docs/feedback-guide.md)
 
 ## 项目结构
@@ -214,7 +221,8 @@ video-rag/
 │   ├── beginner-quickstart.md
 │   ├── chunk-artifact-spec.md
 │   ├── local-search-qa-architecture.md
-│   ├── feedback-guide.md
+│   ├── video-library-mvp.md
+│   ├── video-library-mvp-smoke-test.md
 │   └── public-sample-output.md
 ├── scripts/
 │   └── pipeline.py
@@ -222,6 +230,7 @@ video-rag/
 │   ├── audio/
 │   ├── chunks/
 │   ├── exports/
+│   ├── library/
 │   ├── manifests/
 │   ├── meta/
 │   ├── preview/

@@ -43,6 +43,8 @@ SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".m4v", ".webm"}
 DEFAULT_QA_RETRIEVAL_LIMIT = 5
 MAX_QA_RETRIEVAL_LIMIT = 8
 DEFAULT_SEARCH_LIMIT = 20
+DEFAULT_LIBRARY_SEARCH_LIMIT = 40
+DEFAULT_LIBRARY_SUMMARY_CHARS = 240
 WORD_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 
 
@@ -228,6 +230,7 @@ def output_paths(output_dir: Path, job_id: str) -> dict:
         "text_dir": output_dir / "text",
         "preview_dir": output_dir / "preview",
         "manifest_dir": output_dir / "manifests",
+        "library_dir": output_dir / "library",
         "audio_path": output_dir / "audio" / f"{job_id}.wav",
         "transcript_path": output_dir / "transcripts" / f"{job_id}.json",
         "meta_path": output_dir / "meta" / f"{job_id}.meta.json",
@@ -235,6 +238,7 @@ def output_paths(output_dir: Path, job_id: str) -> dict:
         "text_path": output_dir / "text" / f"{job_id}.txt",
         "preview_path": output_dir / "preview" / f"{job_id}.md",
         "manifest_path": output_dir / "manifests" / f"{job_id}.manifest.json",
+        "library_path": output_dir / "library" / f"{job_id}.video.json",
     }
 
 
@@ -247,6 +251,7 @@ def prepare_output_dirs(paths: dict) -> None:
         "text_dir",
         "preview_dir",
         "manifest_dir",
+        "library_dir",
     ]:
         ensure_dir(paths[key])
 
@@ -541,6 +546,7 @@ def build_preview_markdown(
         f"1. `{preview_path.name}`: the easiest file for a first review",
         f"2. `{text_path.name}`: clean plain text if you just want to read or copy",
         f"3. `{manifest_path.name}`: machine-friendly summary of this run and all output paths",
+        f"4. `{Path(metadata['library_path']).name}`: product-layer record for the personal video library",
         "",
         "## What each output file is for",
         "",
@@ -549,6 +555,7 @@ def build_preview_markdown(
         f"- `{Path(metadata['transcript_path']).name}`: raw timestamped transcript JSON",
         f"- `{Path(metadata['chunk_path']).name}`: chunk-ready intermediate artifact for downstream indexing or retrieval",
         f"- `{Path(metadata['manifest_path']).name}`: one-file summary for apps and automation",
+        f"- `{Path(metadata['library_path']).name}`: product-layer record for the local personal video library",
         f"- `{Path(metadata['audio_path']).name}`: extracted normalized audio",
         "",
         "## Chunk preview",
@@ -566,8 +573,10 @@ def build_manifest(
     text_path: Path,
     preview_path: Path,
     manifest_path: Path,
+    library_path: Path,
 ) -> dict:
     return {
+        "video_id": metadata["video_id"],
         "job_id": metadata["job_id"],
         "status": "completed",
         "source_type": metadata["source_type"],
@@ -591,6 +600,7 @@ def build_manifest(
                 "chunks_json",
                 "metadata_json",
                 "manifest_json",
+                "library_record_json",
             ],
         },
         "artifact_paths": {
@@ -601,6 +611,7 @@ def build_manifest(
             "chunks_json": metadata["chunk_path"],
             "metadata_json": metadata["meta_path"],
             "manifest_json": str(manifest_path.resolve()),
+            "library_record_json": str(library_path.resolve()),
         },
         "artifact_descriptions": {
             "text_txt": "Best for ordinary reading, copy, and note-taking.",
@@ -609,6 +620,7 @@ def build_manifest(
             "chunks_json": "Chunk-ready intermediate artifact for downstream indexing or retrieval.",
             "metadata_json": "Processing metadata that links source and generated artifacts.",
             "manifest_json": "One-file summary for UIs, automation, and downstream integrations.",
+            "library_record_json": "Product-layer video library record for long-term local organization.",
         },
     }
 
@@ -643,6 +655,97 @@ def resolve_path(path_value: Optional[str]) -> Optional[Path]:
 
 def compact_text(text: str) -> str:
     return " ".join(text.split())
+
+
+def build_summary_preview(
+    text_content: str = "",
+    chunk_artifact: Optional[dict] = None,
+    *,
+    max_chars: int = DEFAULT_LIBRARY_SUMMARY_CHARS,
+) -> str:
+    candidates: list[str] = []
+    if text_content.strip():
+        candidates.append(compact_text(text_content))
+    if chunk_artifact:
+        chunk_texts = [chunk.get("text", "") for chunk in chunk_artifact.get("chunks", [])[:2] if chunk.get("text")]
+        if chunk_texts:
+            candidates.append(compact_text(" ".join(chunk_texts)))
+
+    for candidate in candidates:
+        if candidate:
+            if len(candidate) <= max_chars:
+                return candidate
+            return candidate[: max_chars - 3].rstrip() + "..."
+    return ""
+
+
+def normalize_tags(tags_value: Union[str, list, None]) -> list[str]:
+    if isinstance(tags_value, list):
+        raw_tags = tags_value
+    elif isinstance(tags_value, str):
+        raw_tags = re.split(r"[,，\n]+", tags_value)
+    else:
+        raw_tags = []
+
+    tags: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_tags:
+        tag = compact_text(str(raw).strip())
+        if not tag:
+            continue
+        lowered = tag.lower()
+        if lowered in seen:
+            continue
+        tags.append(tag)
+        seen.add(lowered)
+    return tags
+
+
+def library_record_path(data_dir: Union[Path, str], video_id: str) -> Path:
+    return ensure_path(data_dir) / "library" / f"{video_id}.video.json"
+
+
+def export_record_from_path(export_path: Path) -> dict:
+    export_name = export_path.stem
+    export_type = export_name.split("-", 1)[0] if "-" in export_name else "export"
+    created_at = datetime.fromtimestamp(export_path.stat().st_mtime, tz=CST).isoformat()
+    return {
+        "export_id": export_name,
+        "type": export_type,
+        "path": str(export_path.resolve()),
+        "created_at": created_at,
+    }
+
+
+def list_saved_exports_from_disk(data_dir: Union[Path, str], video_id: str) -> list[dict]:
+    exports_dir = ensure_path(data_dir) / "exports" / video_id
+    if not exports_dir.exists():
+        return []
+
+    return [
+        export_record_from_path(path)
+        for path in sorted(exports_dir.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True)
+        if path.is_file()
+    ]
+
+
+def merge_saved_exports(existing_exports: list[dict], disk_exports: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for record in existing_exports + disk_exports:
+        export_path = resolve_path(record.get("path"))
+        if export_path and export_path.exists():
+            normalized = export_record_from_path(export_path)
+        else:
+            normalized = {
+                "export_id": str(record.get("export_id", "")),
+                "type": str(record.get("type", "export")),
+                "path": str(record.get("path", "")),
+                "created_at": str(record.get("created_at", "")),
+            }
+        if normalized["path"]:
+            merged[normalized["path"]] = normalized
+
+    return sorted(merged.values(), key=lambda item: parse_created_at(item["created_at"]), reverse=True)
 
 
 def contains_cjk(text: str) -> bool:
@@ -772,6 +875,238 @@ def search_chunk_artifact(query: str, chunk_artifact: dict, *, limit: int = DEFA
     return results[:limit]
 
 
+def build_library_record(
+    *,
+    data_dir: Union[Path, str],
+    manifest: dict,
+    metadata: dict,
+    chunk_artifact: Optional[dict],
+    text_content: str,
+    existing_record: Optional[dict] = None,
+) -> dict:
+    data_dir = ensure_path(data_dir)
+    video_id = manifest.get("video_id") or metadata.get("video_id") or manifest.get("job_id") or metadata.get("job_id")
+    title = metadata.get("title") or manifest.get("source_title") or video_id
+    artifact_paths = dict(manifest.get("artifact_paths") or {})
+    artifact_paths.setdefault("manifest_json", metadata.get("manifest_path") or "")
+    artifact_paths.setdefault("metadata_json", metadata.get("meta_path") or "")
+    artifact_paths.setdefault("transcript_json", metadata.get("transcript_path") or "")
+    artifact_paths.setdefault("chunks_json", metadata.get("chunk_path") or "")
+    artifact_paths.setdefault("text_txt", metadata.get("text_path") or "")
+    artifact_paths.setdefault("preview_markdown", metadata.get("preview_path") or "")
+    artifact_paths["exports_dir"] = str((data_dir / "exports" / video_id).resolve())
+    artifact_paths["library_record_json"] = str(library_record_path(data_dir, video_id).resolve())
+
+    existing = existing_record or {}
+    return {
+        "video_id": video_id,
+        "job_id": manifest.get("job_id") or metadata.get("job_id") or video_id,
+        "title": title,
+        "display_title": compact_text(str(existing.get("display_title") or title)),
+        "created_at": manifest.get("created_at") or metadata.get("created_at"),
+        "updated_at": existing.get("updated_at") or manifest.get("created_at") or metadata.get("created_at"),
+        "duration_seconds": manifest.get("duration_seconds") or metadata.get("transcript_duration_seconds"),
+        "language": manifest.get("language_detected") or metadata.get("language_detected") or "unknown",
+        "status": manifest.get("status", "completed"),
+        "summary": build_summary_preview(text_content, chunk_artifact),
+        "tags": normalize_tags(existing.get("tags")),
+        "starred": bool(existing.get("starred", False)),
+        "notes": str(existing.get("notes", "")),
+        "source_file_path": metadata.get("input_path") or "",
+        "artifact_paths": artifact_paths,
+        "saved_exports": merge_saved_exports(existing.get("saved_exports", []), list_saved_exports_from_disk(data_dir, video_id)),
+    }
+
+
+def sync_library_record(video_id: str, data_dir: Union[Path, str]) -> dict:
+    data_dir = ensure_path(data_dir)
+    manifest_path = (data_dir / "manifests" / f"{video_id}.manifest.json").resolve()
+    manifest = safe_load_json(manifest_path)
+    if not manifest:
+        raise VideoRagError(
+            f"Manifest not found for video: {video_id}",
+            hint="Process the video again or refresh the library.",
+        )
+
+    artifact_paths = dict(manifest.get("artifact_paths") or {})
+    meta_path = resolve_path(artifact_paths.get("metadata_json")) or (data_dir / "meta" / f"{video_id}.meta.json").resolve()
+    metadata = safe_load_json(meta_path) or {}
+    chunk_artifact = safe_load_json(resolve_path(artifact_paths.get("chunks_json")))
+    text_content = safe_read_text(resolve_path(artifact_paths.get("text_txt")))
+    existing_record = safe_load_json(library_record_path(data_dir, video_id))
+    record = build_library_record(
+        data_dir=data_dir,
+        manifest=manifest,
+        metadata=metadata,
+        chunk_artifact=chunk_artifact,
+        text_content=text_content,
+        existing_record=existing_record,
+    )
+    write_json(library_record_path(data_dir, video_id), record)
+    return record
+
+
+def ensure_library_records(data_dir: Union[Path, str]) -> None:
+    data_dir = ensure_path(data_dir)
+    manifests_dir = data_dir / "manifests"
+    ensure_dir(data_dir / "library")
+    if not manifests_dir.exists():
+        return
+
+    for manifest_path in manifests_dir.glob("*.manifest.json"):
+        manifest = safe_load_json(manifest_path) or {}
+        video_id = manifest.get("video_id") or manifest.get("job_id") or manifest_path.stem.replace(".manifest", "")
+        sync_library_record(video_id, data_dir)
+
+
+def load_video_library_records(data_dir: Union[Path, str]) -> list[dict]:
+    data_dir = ensure_path(data_dir)
+    ensure_library_records(data_dir)
+
+    library_dir = data_dir / "library"
+    if not library_dir.exists():
+        return []
+
+    records = []
+    for record_path in library_dir.glob("*.video.json"):
+        record = safe_load_json(record_path)
+        if not record:
+            continue
+        record.setdefault("display_title", record.get("title") or record.get("video_id"))
+        record.setdefault("tags", [])
+        record.setdefault("starred", False)
+        record.setdefault("notes", "")
+        record.setdefault("saved_exports", [])
+        records.append(record)
+
+    records.sort(key=lambda item: parse_created_at(item.get("created_at")), reverse=True)
+    return records
+
+
+def update_library_record(
+    data_dir: Union[Path, str],
+    video_id: str,
+    *,
+    display_title: Optional[str] = None,
+    tags: Optional[Union[str, list]] = None,
+    notes: Optional[str] = None,
+    starred: Optional[bool] = None,
+) -> dict:
+    data_dir = ensure_path(data_dir)
+    record = safe_load_json(library_record_path(data_dir, video_id)) or sync_library_record(video_id, data_dir)
+    if display_title is not None:
+        record["display_title"] = compact_text(display_title.strip()) or record.get("title") or video_id
+    if tags is not None:
+        record["tags"] = normalize_tags(tags)
+    if notes is not None:
+        record["notes"] = notes.strip()
+    if starred is not None:
+        record["starred"] = bool(starred)
+    record["updated_at"] = datetime.now(CST).isoformat()
+    write_json(library_record_path(data_dir, video_id), record)
+    return record
+
+
+def append_saved_export(data_dir: Union[Path, str], video_id: str, export_type: str, export_path: Union[Path, str]) -> dict:
+    data_dir = ensure_path(data_dir)
+    export_file = ensure_path(export_path)
+    record = safe_load_json(library_record_path(data_dir, video_id)) or sync_library_record(video_id, data_dir)
+    saved_exports = record.get("saved_exports", [])
+    normalized = export_record_from_path(export_file)
+    normalized["type"] = export_type
+    saved_exports = [item for item in saved_exports if item.get("path") != normalized["path"]]
+    saved_exports.insert(0, normalized)
+    record["saved_exports"] = merge_saved_exports(saved_exports, list_saved_exports_from_disk(data_dir, video_id))
+    record["updated_at"] = datetime.now(CST).isoformat()
+    write_json(library_record_path(data_dir, video_id), record)
+    return record
+
+
+def filter_video_library_records(
+    records: list[dict],
+    *,
+    title_query: str = "",
+    language: str = "all",
+    starred: str = "all",
+    sort_order: str = "recent_desc",
+) -> list[dict]:
+    title_query_norm = title_query.strip().lower()
+    filtered = []
+    for record in records:
+        haystack = " ".join(
+            [
+                str(record.get("display_title", "")),
+                str(record.get("title", "")),
+                " ".join(record.get("tags", [])),
+            ]
+        ).lower()
+        if title_query_norm and title_query_norm not in haystack:
+            continue
+        if language != "all" and record.get("language") != language:
+            continue
+        if starred == "starred" and not record.get("starred"):
+            continue
+        if starred == "unstarred" and record.get("starred"):
+            continue
+        filtered.append(record)
+
+    if sort_order == "recent_asc":
+        filtered.sort(key=lambda item: parse_created_at(item.get("created_at")))
+    elif sort_order == "title_asc":
+        filtered.sort(key=lambda item: str(item.get("display_title") or item.get("title") or "").lower())
+    else:
+        filtered.sort(key=lambda item: parse_created_at(item.get("created_at")), reverse=True)
+    return filtered
+
+
+def search_video_library(
+    query: str,
+    records: list[dict],
+    *,
+    limit: int = DEFAULT_LIBRARY_SEARCH_LIMIT,
+) -> list[dict]:
+    query_text = query.strip()
+    if not query_text:
+        return []
+
+    results: list[dict] = []
+    for record in records:
+        chunk_artifact = safe_load_json(resolve_path(record.get("artifact_paths", {}).get("chunks_json"))) or {"chunks": []}
+        video_boost = 0
+        for field_text in [
+            str(record.get("display_title", "")),
+            str(record.get("title", "")),
+            " ".join(record.get("tags", [])),
+            str(record.get("notes", "")),
+            str(record.get("summary", "")),
+        ]:
+            field_score, _ = score_chunk_text(query_text, field_text)
+            video_boost += min(field_score, 6)
+
+        for chunk in chunk_artifact.get("chunks", []):
+            chunk_score, snippet = score_chunk_text(query_text, chunk.get("text", ""))
+            if chunk_score <= 0:
+                continue
+            results.append(
+                {
+                    "result_id": f"{record['video_id']}::{chunk['chunk_id']}",
+                    "video_id": record["video_id"],
+                    "display_title": record.get("display_title") or record.get("title") or record["video_id"],
+                    "chunk_id": chunk["chunk_id"],
+                    "chunk_index": chunk["index"],
+                    "start": chunk["start"],
+                    "end": chunk["end"],
+                    "match_snippet": snippet or chunk.get("text", "")[:120],
+                    "summary_preview": record.get("summary", ""),
+                    "score": chunk_score + video_boost,
+                    "created_at": record.get("created_at"),
+                }
+            )
+
+    results.sort(key=lambda item: (-item["score"], parse_created_at(item.get("created_at")), item["start"]))
+    return results[:limit]
+
+
 def load_history_records(data_dir: Union[Path, str]) -> list[dict]:
     data_dir = ensure_path(data_dir)
     manifests_dir = data_dir / "manifests"
@@ -811,12 +1146,14 @@ def load_history_records(data_dir: Union[Path, str]) -> list[dict]:
 
 def load_video_bundle(job_id: str, data_dir: Union[Path, str]) -> dict:
     data_dir = ensure_path(data_dir)
-    manifest_path = (data_dir / "manifests" / f"{job_id}.manifest.json").resolve()
+    video_id = job_id
+    sync_library_record(video_id, data_dir)
+    manifest_path = (data_dir / "manifests" / f"{video_id}.manifest.json").resolve()
     manifest = safe_load_json(manifest_path)
     if not manifest:
         raise VideoRagError(
-            f"Manifest not found for job: {job_id}",
-            hint="Process the video again or refresh the history list.",
+            f"Manifest not found for job: {video_id}",
+            hint="Process the video again or refresh the library.",
         )
 
     artifact_paths = manifest.get("artifact_paths", {})
@@ -825,24 +1162,30 @@ def load_video_bundle(job_id: str, data_dir: Union[Path, str]) -> dict:
     transcript_path = resolve_path(artifact_paths.get("transcript_json"))
     text_path = resolve_path(artifact_paths.get("text_txt"))
     preview_path = resolve_path(artifact_paths.get("preview_markdown"))
+    library_path = resolve_path(artifact_paths.get("library_record_json")) or library_record_path(data_dir, video_id)
 
     metadata = safe_load_json(meta_path) or {}
     chunk_artifact = safe_load_json(chunk_path)
     transcript = safe_load_json(transcript_path) or {}
+    library_record = safe_load_json(library_path) or {}
     if not chunk_artifact:
-        raise VideoRagError(
-            f"Chunk artifact missing for job: {job_id}",
-            hint="This video needs a valid `.chunks.json` file before search or QA can work.",
-        )
+        chunk_artifact = {
+            "job_id": video_id,
+            "chunk_count": 0,
+            "chunks": [],
+        }
 
     chunk_map = {chunk["chunk_id"]: chunk for chunk in chunk_artifact.get("chunks", [])}
     return {
-        "job_id": job_id,
+        "video_id": video_id,
+        "job_id": manifest.get("job_id") or video_id,
         "manifest": manifest,
+        "library_record": library_record,
         "metadata": metadata,
         "transcript": transcript,
         "chunks": chunk_artifact,
         "chunk_map": chunk_map,
+        "content_ready": bool(chunk_artifact.get("chunks")),
         "text_content": safe_read_text(text_path),
         "preview_content": safe_read_text(preview_path),
         "artifact_paths": artifact_paths,
@@ -853,6 +1196,8 @@ def load_video_bundle(job_id: str, data_dir: Union[Path, str]) -> dict:
             "transcript_path": str(transcript_path) if transcript_path else "",
             "text_path": str(text_path) if text_path else "",
             "preview_path": str(preview_path) if preview_path else "",
+            "library_path": str(library_path) if library_path else "",
+            "exports_dir": str((data_dir / "exports" / video_id).resolve()),
         },
     }
 
@@ -1110,6 +1455,7 @@ def export_search_results(data_dir: Union[Path, str], video_bundle: dict, query:
                 ]
             )
     write_text(filename, "\n".join(lines).strip() + "\n")
+    append_saved_export(data_dir, video_bundle["video_id"], "search", filename)
     return filename
 
 
@@ -1141,6 +1487,7 @@ def export_qa_result(data_dir: Union[Path, str], video_bundle: dict, qa_result: 
                 ]
             )
     write_text(filename, "\n".join(lines).strip() + "\n")
+    append_saved_export(data_dir, video_bundle["video_id"], "qa", filename)
     return filename
 
 
@@ -1176,6 +1523,7 @@ def export_video_summary(data_dir: Union[Path, str], video_bundle: dict) -> Path
         if len(chunks) > 12:
             lines.append(f"_... and {len(chunks) - 12} more chunks in the full chunk artifact._")
     write_text(filename, "\n".join(lines).strip() + "\n")
+    append_saved_export(data_dir, video_bundle["video_id"], "summary", filename)
     return filename
 
 
@@ -1246,6 +1594,7 @@ def run_pipeline(
     emit_log("\n[Step 3/6] Writing metadata", log_callback=log_callback, echo=echo_logs)
     metadata = {
         "job_id": job_id,
+        "video_id": job_id,
         "source_type": "local_video",
         "platform": "local",
         "input_path": str(input_path.resolve()),
@@ -1289,6 +1638,7 @@ def run_pipeline(
     metadata["preview_path"] = str(paths["preview_path"].resolve())
     metadata["manifest_path"] = str(paths["manifest_path"].resolve())
     metadata["meta_path"] = str(paths["meta_path"].resolve())
+    metadata["library_path"] = str(paths["library_path"].resolve())
 
     preview_markdown = build_preview_markdown(
         metadata,
@@ -1309,8 +1659,10 @@ def run_pipeline(
         text_path=paths["text_path"],
         preview_path=paths["preview_path"],
         manifest_path=paths["manifest_path"],
+        library_path=paths["library_path"],
     )
     write_json(paths["manifest_path"], manifest)
+    library_record = sync_library_record(job_id, config.output_dir)
     write_json(paths["meta_path"], metadata)
 
     emit_log(f"[Done] Manifest saved: {paths['manifest_path']}", log_callback=log_callback, echo=echo_logs)
@@ -1322,6 +1674,7 @@ def run_pipeline(
         "transcript": transcript_data,
         "chunks": chunk_artifact,
         "manifest": manifest,
+        "library_record": library_record,
         "transcript_text": transcript_text,
         "preview_markdown": preview_markdown,
     }

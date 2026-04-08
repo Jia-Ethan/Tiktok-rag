@@ -4,7 +4,7 @@ This sample shows what `video-rag` produces today and why those artifacts matter
 
 If you are just trying the tool for the first time, start with [beginner-quickstart.md](beginner-quickstart.md) and open the generated `preview.md` or `text.txt` first.
 
-The current release still does **not** implement retrieval. What it does provide now is a reliable path from downloaded video input to transcript, metadata, chunk-ready artifacts, readable text, and manifest outputs.
+The current release still does **not** implement full retrieval. What it does provide now is a reliable path from downloaded video input to transcript, metadata, chunk-ready artifacts, readable text, manifest outputs, and a product-layer video library record.
 
 ## Input
 
@@ -71,7 +71,7 @@ Example shape:
   "platform": "local",
   "input_path": "/absolute/path/to/downloaded-video.mp4",
   "input_size_bytes": 34561319,
-  "video_id": null,
+  "video_id": "6c2105b2808a",
   "title": "sample-video",
   "caption": null,
   "audio_path": "/absolute/path/to/data/audio/<job_id>.wav",
@@ -219,7 +219,45 @@ What this gives you:
 - one machine-friendly summary of the whole run
 - a direct integration point for local UIs and automation
 - a reliable way to discover which output file a normal user should open first
-- the primary data source for the local history view / video library in the current app
+- the compatibility source that can still rebuild a product-layer video library record when needed
+
+### Video library record
+
+Path pattern:
+
+```text
+data/library/<video_id>.video.json
+```
+
+Example shape:
+
+```json
+{
+  "video_id": "<job_id>",
+  "job_id": "<job_id>",
+  "title": "sample-video",
+  "display_title": "sample-video",
+  "created_at": "2026-04-08T09:33:29+08:00",
+  "updated_at": "2026-04-08T09:33:29+08:00",
+  "duration_seconds": 189.47,
+  "language": "zh",
+  "status": "completed",
+  "summary": "short local summary preview text",
+  "tags": [],
+  "starred": false,
+  "notes": "",
+  "source_file_path": "/absolute/path/to/downloaded-video.mp4",
+  "artifact_paths": {},
+  "saved_exports": []
+}
+```
+
+What this gives you:
+
+- a stable product-layer record for long-term local organization
+- editable fields such as `display_title`, `tags`, `starred`, and `notes`
+- a place to attach saved search / QA / summary exports back to a specific video
+- the main data source for the personal video library UI
 
 ## Runtime directory layout
 
@@ -229,6 +267,10 @@ data/
 │   └── <job_id>.wav
 ├── chunks/
 │   └── <job_id>.chunks.json
+├── exports/
+│   └── <video_id>/
+├── library/
+│   └── <video_id>.video.json
 ├── manifests/
 │   └── <job_id>.manifest.json
 ├── meta/
@@ -247,7 +289,8 @@ data/
 - Metadata keeps source relationships and processing context intact
 - Readable text and preview outputs make the pipeline usable for non-technical users
 - Chunks turn raw transcript output into retrieval-ready precursors without locking the repo into a specific vector stack
-- Manifest now also anchors the local single-video library view, while chunks anchor local search and grounded QA
+- Manifest and metadata keep the processing layer stable, while the video library record adds a durable product layer for long-term use
+- Chunks anchor local search and grounded QA
 - Together they provide a cleaner starting point for indexing, retrieval, summary generation, and prompt context construction
 
 ## Reliability notes

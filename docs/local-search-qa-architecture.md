@@ -1,19 +1,19 @@
 # Local search + QA architecture
 
-这份文档只说明这一轮新增的本地单视频搜索与 grounded QA 闭环，不重复介绍基础转写流程。
+这份文档只说明当前版本里“个人视频库”内部的本地单视频搜索与 grounded QA 闭环，不重复介绍基础转写流程。
 
 ## 页面结构
 
 当前 Gradio UI 分成两个工作区：
 
-1. `处理新视频`
-   - 负责选择本地视频并运行现有 pipeline
-   - 继续输出 transcript / chunk / preview / manifest 等 artifact
-2. `历史纪录 / 当前视频`
-   - 读取 `data/manifests/*.manifest.json`
-   - 展示历史纪录 / 视频库
+1. `个人视频库`
+   - 读取 `data/library/*.video.json`
+   - 展示视频库、筛选、跨视频关键词搜索
    - 进入单视频详情页
-   - 执行当前视频搜索、当前视频 grounded QA、匯出
+   - 在详情页里执行当前视频搜索、当前视频 grounded QA、匯出
+2. `处理新视频`
+   - 负责选择本地视频并运行现有 pipeline
+   - 继续输出 transcript / chunk / preview / manifest / library record 等 artifact
 
 ## 资料流
 
@@ -30,21 +30,24 @@
 - `preview/*.md`
 - `text/*.txt`
 - `manifests/*.manifest.json`
+- `library/*.video.json`
 
-### 首页历史纪录
+### 视频库主页
 
-`历史纪录 / 视频库` 不另建数据库，直接扫描：
+`个人视频库` 默认读取：
 
 ```text
-data/manifests/*.manifest.json
+data/library/*.video.json
 ```
 
-manifest 是唯一主资料源。
+library record 是产品层主资料源。
 
-如果 manifest 某些字段不够显示，只做最小兼容补读：
+若旧视频还没有 library record，则会基于现有 artifact 自动补建。
 
-- 优先从 `artifact_paths.metadata_json` 读取旧 `meta`
-- 不另起第二套主索引
+兼容兜底来源仍然是：
+
+- `manifests/*.manifest.json`
+- `meta/*.meta.json`
 
 ## 搜索流程
 
